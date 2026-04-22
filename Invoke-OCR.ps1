@@ -24,6 +24,7 @@
     # Dealing with spaces, accents, and hyphens at the beginning of file names:
     .\Invoke-OCR.ps1 -Path 'C:\My Scans\-éxâmple file.pdf'
 #>
+
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true)]
@@ -35,6 +36,15 @@ param(
 
     # DPI for PDF bursting via Ghostscript and Tesseract OCR
     [int]$Dpi = 300,
+
+    # Specific page to process. If 0 or omitted, processes all pages.
+    [int]$Page = 0,
+
+    # Path to a PDF file to use as a watermark (philigram).
+    [string]$WatermarkPdf,
+
+    # Number of pages to process concurrently in Tesseract. Requires PowerShell 7.
+    [int]$ThrottleLimit = 4,
 
     # Bypasses the confirmation prompt asking if the script found the correct executables.
     [Alias("y")]
@@ -125,6 +135,7 @@ BEGIN {
         $cmds = Get-Command $ExePattern -ErrorAction SilentlyContinue | Where-Object CommandType -eq 'Application'
         foreach ($cmd in $cmds) {
             $candidate = $cmd.Source
+            if ($candidate -match 'uninstall|unins') { continue }
             if (Verify-Executable $candidate $VerifyArg $VerifyRegex) { 
                 if (Confirm-Executable $candidate) { return $candidate }
             }
@@ -138,6 +149,7 @@ BEGIN {
             foreach ($folder in $folders) {
                 $exes = Get-ChildItem -Path $folder.FullName -Filter $ExePattern -Recurse -File -ErrorAction SilentlyContinue
                 foreach ($exe in $exes) {
+                    if ($exe.FullName -match 'uninstall|unins') { continue }
                     if (Verify-Executable $exe.FullName $VerifyArg $VerifyRegex) { 
                         if (Confirm-Executable $exe.FullName) { return $exe.FullName }
                     }
@@ -166,6 +178,8 @@ PROCESS {
     $langStr = $Language -join "+"
 
     foreach ($p in $Path) {
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+
         try {
             $file = Get-Item -LiteralPath $p -ErrorAction Stop
         }
@@ -233,16 +247,20 @@ PROCESS {
             New-Item -ItemType Directory -Path $tempDir | Out-Null
             
             try {
-                Write-Info ("Extracting {0} pages with Ghostscript at {1} DPI..." -f $file.Name, $Dpi)
+                Write-Info ("Extracting pages with Ghostscript at {0} DPI..." -f $Dpi)
                 $gsArgs = @(
                     "-dSAFER",
                     "-dBATCH",
                     "-dNOPAUSE",
                     "-r$Dpi",
                     "-sDEVICE=png16m",
-                    "-sOutputFile=`"$tempDir\page_%04d.png`"",
-                    "`"$($file.FullName)`""
+                    "-sOutputFile=`"$tempDir\page_%04d.png`""
                 )
+                if ($Page -gt 0) {
+                    $gsArgs += "-dFirstPage=$Page"
+                    $gsArgs += "-dLastPage=$Page"
+                }
+                $gsArgs += "`"$($file.FullName)`""
                 if ($GhostscriptArgs) { $gsArgs += $GhostscriptArgs }
                 
                 $gsProcess = Start-Process -FilePath $ghostscript -ArgumentList $gsArgs -Wait -NoNewWindow -PassThru
@@ -258,45 +276,103 @@ PROCESS {
                         $errorMsg = "Ghostscript completed but no images were extracted. Ensure Ghostscript handles this PDF properly."
                     }
                     else {
-                        $pdfPages = @()
-                        $i = 1
-                        foreach ($img in $images) {
-                            Write-Info ("OCRing page {0} of {1}..." -f $i, $images.Count)
-                            $outPdfBase = Join-Path $tempDir $img.BaseName
+                        Write-Info ("OCRing {0} pages in parallel (ThrottleLimit: {1})..." -f $images.Count, $ThrottleLimit)
+                        
+                        $results = $images | ForEach-Object -Parallel {
+                            $img = $_
+                            $tesseract = $using:tesseract
+                            $langStr = $using:langStr
+                            $Dpi = $using:Dpi
+                            $TesseractArgs = $using:TesseractArgs
+                            
+                            $pageRegex = [regex]::Match($img.BaseName, '\d+')
+                            $pageNum = if ($pageRegex.Success) { [int]$pageRegex.Value } else { 0 }
+                            
+                            $outPdfBase = Join-Path $img.DirectoryName $img.BaseName
                             
                             $tessArgs = @(
                                 "`"$($img.FullName)`"",
                                 "`"$outPdfBase`"",
                                 "-l", $langStr,
                                 "--dpi", [string]$Dpi,
-                                "pdf"
+                                "pdf", "txt"
                             )
                             if ($TesseractArgs) { $tessArgs += $TesseractArgs }
                             
                             $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -NoNewWindow -PassThru
                             if ($tessProcess.ExitCode -ne 0) {
-                                $hasError = $true
-                                $errorMsg = "Tesseract failed on page $i with exit code $($tessProcess.ExitCode)."
-                                break
+                                return @{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $($tessProcess.ExitCode)." }
                             }
                             
-                            $pdfPages += "`"$outPdfBase.pdf`""
-                            $i++
+                            # Append page number header to the text file
+                            $txtPath = "$outPdfBase.txt"
+                            if (Test-Path -LiteralPath $txtPath) {
+                                $txtContent = Get-Content -LiteralPath $txtPath -Raw
+                                $newContent = "--- PAGE $pageNum ---`r`n" + $txtContent
+                                Set-Content -LiteralPath $txtPath -Value $newContent
+                            }
+                            
+                            return @{ Success = $true; PdfPath = "`"$outPdfBase.pdf`""; TxtPath = $txtPath }
+                        } -ThrottleLimit $ThrottleLimit
+                        
+                        $failed = $results | Where-Object { -not $_.Success }
+                        if ($failed.Count -gt 0) {
+                            $hasError = $true
+                            $errorMsg = $failed[0].ErrorMsg
                         }
                         
                         if (-not $hasError) {
+                            $pdfPages = $results | Select-Object -ExpandProperty PdfPath
+                            $txtPages = $results | Select-Object -ExpandProperty TxtPath
+                            
                             Write-Info ("Merging {0} OCR'd pages back into PDF..." -f $pdfPages.Count)
+                            
                             $allPdftkArgs = @()
                             $allPdftkArgs += $pdfPages
                             $allPdftkArgs += "cat"
                             $allPdftkArgs += "output"
-                            $allPdftkArgs += "`"$outPath`""
-                            if ($PdftkArgs) { $allPdftkArgs += $PdftkArgs }
                             
-                            $pdftkProcess = Start-Process -FilePath $pdftk -ArgumentList $allPdftkArgs -Wait -NoNewWindow -PassThru
-                            if ($pdftkProcess.ExitCode -ne 0) {
-                                $hasError = $true
-                                $errorMsg = "PDFtk failed to merge the PDFs with exit code $($pdftkProcess.ExitCode)."
+                            # If a watermark is requested, output to a temporary PDF, then watermark it
+                            if ($WatermarkPdf -and (Test-Path -LiteralPath $WatermarkPdf)) {
+                                $tempMergedPdf = Join-Path $tempDir "temp_merged.pdf"
+                                $allPdftkArgs += "`"$tempMergedPdf`""
+                                if ($PdftkArgs) { $allPdftkArgs += $PdftkArgs }
+                                
+                                $pdftkProcess = Start-Process -FilePath $pdftk -ArgumentList $allPdftkArgs -Wait -NoNewWindow -PassThru
+                                if ($pdftkProcess.ExitCode -ne 0) {
+                                    $hasError = $true
+                                    $errorMsg = "PDFtk failed to merge the PDFs with exit code $($pdftkProcess.ExitCode)."
+                                } else {
+                                    Write-Info "Applying watermark ($WatermarkPdf)..."
+                                    $watermarkArgs = @(
+                                        "`"$tempMergedPdf`"",
+                                        "multibackground",
+                                        "`"$WatermarkPdf`"",
+                                        "output",
+                                        "`"$outPath`""
+                                    )
+                                    $wmProcess = Start-Process -FilePath $pdftk -ArgumentList $watermarkArgs -Wait -NoNewWindow -PassThru
+                                    if ($wmProcess.ExitCode -ne 0) {
+                                        $hasError = $true
+                                        $errorMsg = "PDFtk failed to apply watermark with exit code $($wmProcess.ExitCode)."
+                                    }
+                                }
+                            } else {
+                                $allPdftkArgs += "`"$outPath`""
+                                if ($PdftkArgs) { $allPdftkArgs += $PdftkArgs }
+                                
+                                $pdftkProcess = Start-Process -FilePath $pdftk -ArgumentList $allPdftkArgs -Wait -NoNewWindow -PassThru
+                                if ($pdftkProcess.ExitCode -ne 0) {
+                                    $hasError = $true
+                                    $errorMsg = "PDFtk failed to merge the PDFs with exit code $($pdftkProcess.ExitCode)."
+                                }
+                            }
+                            
+                            # Merge text files
+                            if (-not $hasError) {
+                                $outTxtPath = Join-Path $file.DirectoryName ($file.BaseName + "_ocr.txt")
+                                Get-Content -LiteralPath $txtPages | Set-Content -LiteralPath $outTxtPath
+                                Write-Info "Saved extracted text to $outTxtPath"
                             }
                         }
                     }
@@ -321,7 +397,7 @@ PROCESS {
                     "`"$outPdfBaseDirect`"",
                     "-l", $langStr,
                     "--dpi", [string]$Dpi,
-                    "pdf"
+                    "pdf", "txt"
                 )
                 if ($TesseractArgs) { $tessArgs += $TesseractArgs }
                 
@@ -329,6 +405,26 @@ PROCESS {
                 if ($tessProcess.ExitCode -ne 0) {
                     $hasError = $true
                     $errorMsg = "Tesseract failed directly with exit code $($tessProcess.ExitCode)."
+                } else {
+                    if ($WatermarkPdf -and (Test-Path -LiteralPath $WatermarkPdf)) {
+                        $tempPdf = "$outPdfBaseDirect.pdf"
+                        $tempWMPdf = "$outPdfBaseDirect.temp.pdf"
+                        Rename-Item -LiteralPath $tempPdf -NewName (Split-Path $tempWMPdf -Leaf)
+                        
+                        $watermarkArgs = @(
+                            "`"$tempWMPdf`"",
+                            "multibackground",
+                            "`"$WatermarkPdf`"",
+                            "output",
+                            "`"$tempPdf`""
+                        )
+                        $wmProcess = Start-Process -FilePath $pdftk -ArgumentList $watermarkArgs -Wait -NoNewWindow -PassThru
+                        if ($wmProcess.ExitCode -ne 0) {
+                            $hasError = $true
+                            $errorMsg = "PDFtk failed to apply watermark to image with exit code $($wmProcess.ExitCode)."
+                        }
+                        Remove-Item -LiteralPath $tempWMPdf -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
             catch {
