@@ -21,11 +21,37 @@ This script acts as the orchestration layer between three powerful open-source u
 2. **[Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)**: The core Optical Character Recognition engine.
 3. **[PDFtk Server](https://www.pdflabs.com/tools/pdftk-server/)**: Used to rapidly safely merge the resulting standalone OCR'd pages back into a cohesive, single PDF.
 
-*Note: Parallel processing features require **PowerShell 7+**.*
+*Note: Parallel processing and background trigger features require **PowerShell 7+**.*
 
-## 🚀 Usage
+---
 
-The script is built natively for PowerShell Advanced Functions, meaning it seamlessly accepts pipeline inputs and parameters.
+## 🤖 Automated Background Trigger System
+
+You can transform this script into a fully automated 24/7 background service! When installed, you can simply drop a file into a specific folder, and it will be silently processed in the background.
+
+The system will automatically generate these folders for you on the C:\ drive:
+- `C:\scans\en` ➔ Maps to `-Language eng`
+- `C:\scans\fr` ➔ Maps to `-Language fra`
+- `C:\scans\de` ➔ Maps to `-Language deu`
+- `C:\scans\lb` ➔ Maps to `-Language ltz`
+- `C:\scans` ➔ Base default mapping
+
+### Installation & Management
+
+The project includes 3 management scripts to control your background service:
+
+1. **Install the Service**: Run `.\Install-OCRWatcher.ps1` 
+   - *This will check if you have PowerShell 7 and all prerequisites installed, generate the `C:\scans` folder structure, and register a hidden Windows Scheduled Task that boots on startup.*
+2. **Check Status**: Run `.\Get-OCRWatcherStatus.ps1`
+   - *Verifies if the background listener is currently `RUNNING`, `DISABLED`, or `READY`.*
+3. **Uninstall the Service**: Run `.\Remove-OCRWatcher.ps1`
+   - *Completely unregisters and deletes the background task from your system.*
+
+---
+
+## 🚀 Manual Usage
+
+If you prefer to run it manually, the script is built natively for PowerShell Advanced Functions, meaning it seamlessly accepts pipeline inputs and parameters.
 
 ### Basic Run
 Run standard OCR on a single document defaults (6 languages, 300 DPI, 4 parallel threads):
