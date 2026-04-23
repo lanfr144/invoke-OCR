@@ -11,6 +11,10 @@ A robust, intelligent PowerShell automation script designed to seamlessly extrac
 - **Watermarking (Philigram)**: Built-in support to seamlessly stamp a custom watermark across all your generated pages using PDFtk.
 - **Timestamp Logic**: Avoids re-processing the same files over and over. If an `_ocr.pdf` already exists and is newer than the source, the script gracefully moves onto the next task.
 - **Fail-safe Error Logging**: A failure doesn't crash the loop. If a specific page corrupts during Ghostscript bursting or Tesseract parsing, the script catches it, isolates a `document.err.log` file, and keeps working through your pipeline. 
+- **Automated Emailing**: Natively hooks into an SMTP server to automatically email users the OCR'd PDFs and text files as soon as they finish processing.
+- **Smart Archiving**: Move the original source files and output files to separate backup directories automatically, or completely delete the original source when finished to keep your drop folders clean.
+- **Windows Event Logging**: Every file processed is securely logged to the native Windows Event Viewer (Application log), recording exact processing times and success/failure states.
+- **Desktop Notifications**: If the background watcher encounters a corrupted file, it instantly triggers a native Windows Toast Notification to alert you of the failure.
 - **Bulletproof Parsing**: Fully compatible with `-LiteralPath` so filenames with spaces, hyphens (`-`), brackets (`[]`), or foreign accents never break your shell!
 
 ## ⚙️ Prerequisites
@@ -46,6 +50,16 @@ The project includes 3 management scripts to control your background service:
    - *Verifies if the background listener is currently `RUNNING`, `DISABLED`, or `READY`.*
 3. **Uninstall the Service**: Run `.\Remove-OCRWatcher.ps1`
    - *Completely unregisters and deletes the background task from your system.*
+
+---
+
+## 🖱️ Windows Right-Click Integration
+
+You don't have to use the background folders! You can inject the OCR tool directly into Windows Explorer.
+
+1. **Install Menu**: Run `.\Install-ContextMenu.ps1` (it will auto-request Admin rights).
+2. **Usage**: You can now right-click ANY PDF, PNG, JPG, or TIFF anywhere on your computer (even your Desktop) and click **"Make Searchable (Invoke-OCR)"**.
+3. **Remove Menu**: Run `.\Remove-ContextMenu.ps1`.
 
 ---
 
@@ -91,5 +105,15 @@ Process a PDF that *already has some text* (like a schema missing OCR), limit th
 | `-Quiet` | `Switch` | `$false` | Console verbosity lock. Suppresses success/progress messages but allows Warning & Errors. |
 | `-Silent` | `Switch` | `$false` | The nuclear option. Mutes everything. Designed for background scheduled tasks. |
 | `-ForceOCR` | `Switch` | `$false` | Unlocks files that fail the `txtwrite` pre-flight check, processing them regardless of existing text. |
+| `-MoveSourceDir`| `String` | None | Directory to move the original PDF/image to after a successful scan. |
+| `-MoveOcrDir`   | `String` | None | Directory to move the generated `_ocr.pdf` to. |
+| `-MoveTxtDir`   | `String` | None | Directory to move the generated `_ocr.txt` to. |
+| `-RemoveSource` | `Switch` | `$false` | Permanently deletes the original PDF/image after a successful scan. |
+| `-EmailTo`      | `String[]`| None | Array of email addresses (e.g., `"Mr Smith" <a@b.com>`) to send results to. |
+| `-EmailFiles`   | `String[]`| `Ocr` | Which files to attach. Options: `Source`, `Ocr`, `Txt`. |
+| `-SmtpServer`   | `String` | None | SMTP Server address required to send emails. |
+| `-SmtpPort`     | `Int`    | `25` | Port for the SMTP server. |
+| `-SmtpUser`     | `String` | None | Username for SMTP authentication. |
+| `-SmtpPassword` | `String` | None | Password for SMTP authentication. |
 
 *You can also directly inject overriding paths via `-TesseractPath`, `-GhostscriptPath`, and `-PdftkPath`.*

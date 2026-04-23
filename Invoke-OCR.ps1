@@ -71,7 +71,21 @@ param(
     [string[]]$GhostscriptArgs,
 
     # Additional custom parameters to pass verbatim into PDFtk
-    [string[]]$PdftkArgs
+    [string[]]$PdftkArgs,
+
+    # File Movement
+    [string]$MoveSourceDir,
+    [string]$MoveOcrDir,
+    [string]$MoveTxtDir,
+    [switch]$RemoveSource,
+
+    # Emailing
+    [string[]]$EmailTo,
+    [string[]]$EmailFiles = @("Ocr"),
+    [string]$SmtpServer,
+    [int]$SmtpPort = 25,
+    [string]$SmtpUser,
+    [string]$SmtpPassword
 )
 
 BEGIN {
@@ -89,6 +103,28 @@ BEGIN {
     function Write-Err {
         param([string]$Message)
         if (-not $Silent) { Write-Error $Message }
+    }
+
+    function Write-SystemLog {
+        param([string]$Message, [string]$Type = "Information")
+        $logPath = Join-Path $PSScriptRoot "ocr_service.log"
+        $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        $line = "[$timestamp] [$Type] $Message"
+        Add-Content -LiteralPath $logPath -Value $line -ErrorAction SilentlyContinue
+
+        try {
+            if (-not [System.Diagnostics.EventLog]::SourceExists("Invoke-OCR")) {
+                [System.Diagnostics.EventLog]::CreateEventSource("Invoke-OCR", "Application")
+            }
+            [System.Diagnostics.EventLog]::WriteEntry("Invoke-OCR", $Message, $Type, 1)
+        } catch { }
+    }
+
+    function Show-ErrorPopup {
+        param([string]$Title, [string]$Message)
+        try {
+            Start-Process "msg.exe" -ArgumentList "* `"$Title: $Message`"" -WindowStyle Hidden
+        } catch { }
     }
 
     function Verify-Executable {
@@ -178,6 +214,7 @@ PROCESS {
     $langStr = $Language -join "+"
 
     foreach ($p in $Path) {
+        $startTime = Get-Date
         if ([string]::IsNullOrWhiteSpace($p)) { continue }
 
         try {
@@ -441,9 +478,59 @@ PROCESS {
         if ($hasError) {
             Write-Err "Failed to fully process $($file.Name): $errorMsg"
             Set-Content -LiteralPath $errPath -Value $errorMsg
+            Show-ErrorPopup "OCR Error" "Failed to process $($file.Name): $errorMsg"
+            Write-SystemLog "Failed to process $($file.Name). Error: $errorMsg" "Error"
         }
         else {
-            Write-Info "Success: Created $($file.BaseName)_ocr.pdf"
+            $elapsed = (Get-Date) - $startTime
+            $timeStr = [math]::Round($elapsed.TotalSeconds, 2)
+            Write-Info "Success: Created $($file.BaseName)_ocr.pdf in ${timeStr}s"
+            Write-SystemLog "Successfully processed $($file.Name) in ${timeStr} seconds." "Information"
+            
+            # File Movement Variables
+            $outTxtPath = Join-Path $file.DirectoryName ($file.BaseName + "_ocr.txt")
+            
+            # Emailing
+            if ($EmailTo -and $SmtpServer) {
+                Write-Info "Sending email to $($EmailTo -join ', ')..."
+                try {
+                    $attachments = @()
+                    if ($EmailFiles -contains "Source") { $attachments += $file.FullName }
+                    if ($EmailFiles -contains "Ocr") { $attachments += $outPath }
+                    if ($EmailFiles -contains "Txt" -and (Test-Path $outTxtPath)) { $attachments += $outTxtPath }
+
+                    $mailParams = @{
+                        To = $EmailTo
+                        From = "Invoke-OCR <no-reply@localhost>"
+                        Subject = "OCR Completed: $($file.Name)"
+                        Body = "The document $($file.Name) was successfully processed in ${timeStr} seconds."
+                        SmtpServer = $SmtpServer
+                        Port = $SmtpPort
+                        Attachments = $attachments
+                    }
+                    if ($SmtpUser -and $SmtpPassword) {
+                        $secPassword = ConvertTo-SecureString $SmtpPassword -AsPlainText -Force
+                        $mailParams.Credential = New-Object System.Management.Automation.PSCredential ($SmtpUser, $secPassword)
+                    }
+                    Send-MailMessage @mailParams -ErrorAction Stop
+                } catch {
+                    Write-Warn "Failed to send email: $_"
+                    Write-SystemLog "Failed to send email for $($file.Name): $_" "Warning"
+                }
+            }
+            
+            # File Movement Logic
+            if ($MoveOcrDir -and (Test-Path -LiteralPath $MoveOcrDir)) {
+                Move-Item -LiteralPath $outPath -Destination $MoveOcrDir -Force
+            }
+            if ($MoveTxtDir -and (Test-Path -LiteralPath $MoveTxtDir) -and (Test-Path -LiteralPath $outTxtPath)) {
+                Move-Item -LiteralPath $outTxtPath -Destination $MoveTxtDir -Force
+            }
+            if ($MoveSourceDir -and (Test-Path -LiteralPath $MoveSourceDir)) {
+                Move-Item -LiteralPath $file.FullName -Destination $MoveSourceDir -Force
+            } elseif ($RemoveSource) {
+                Remove-Item -LiteralPath $file.FullName -Force
+            }
         }
     }
 }
