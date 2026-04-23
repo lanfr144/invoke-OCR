@@ -62,10 +62,11 @@ $action = {
         return
     }
 
-    # Determine Language based on folder
-    $lang = "eng+fra+deu+ltz+por+lat" # default fallback
+    # 1. Base default fallback
+    $lang = "eng+fra+deu+ltz+por+lat" 
     $dirName = (Split-Path -Leaf $dir).ToLower()
 
+    # 2. Directory based override
     switch ($dirName) {
         "en" { $lang = "eng" }
         "de" { $lang = "deu" }
@@ -73,16 +74,58 @@ $action = {
         "lb" { $lang = "ltz" }
     }
 
-    Write-Host "Triggering Invoke-OCR for $path with Language $lang..."
-    
-    # Trigger the script silently
+    # Base Arguments
     $argsList = @(
         "-File", "`"$InvokeScript`"",
         "-Path", "`"$path`"",
-        "-Language", "`"$lang`"",
         "-Silent",
         "-y"
     )
+
+    $customLang = $null
+
+    # 3. Config file based override
+    $configPath = Join-Path $dir ".ocrconfig"
+    if (Test-Path -LiteralPath $configPath) {
+        Write-Host "Found .ocrconfig file in $dir"
+        $lines = Get-Content -LiteralPath $configPath
+        foreach ($line in $lines) {
+            $line = $line.Trim()
+            # Ignore comments and empty lines
+            if ([string]::IsNullOrWhiteSpace($line) -or $line -match "^(#|')") { continue }
+            
+            # Parse Key=Value
+            $idx = $line.IndexOf('=')
+            if ($idx -gt 0) {
+                $key = $line.Substring(0, $idx).Trim()
+                $value = $line.Substring($idx + 1).Trim()
+                
+                # Strip surrounding quotes if present
+                if (($value.StartsWith("`"") -and $value.EndsWith("`"")) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                    $value = $value.Substring(1, $value.Length - 2)
+                }
+
+                if ($key -ieq "Language") {
+                    $customLang = $value
+                } else {
+                    # Inject arbitrary parameter
+                    $argsList += "-$key"
+                    if (-not [string]::IsNullOrWhiteSpace($value)) {
+                        $argsList += "`"$value`""
+                    }
+                }
+            }
+        }
+    }
+
+    if ($customLang) {
+        $lang = $customLang
+    }
+    
+    $argsList += "-Language"
+    $argsList += "`"$lang`""
+
+    Write-Host "Triggering Invoke-OCR for $path with Language $lang..."
     
     # Start the process hidden so it doesn't interrupt the user
     Start-Process -FilePath "pwsh" -ArgumentList $argsList -WindowStyle Hidden -Wait

@@ -5,6 +5,16 @@
 
 $ErrorActionPreference = "Stop"
 
+# Auto-elevate to Administrator
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Administrator privileges required. Requesting elevation..." -ForegroundColor Yellow
+    $exe = (Get-Process -Id $PID).Path
+    Start-Process -FilePath $exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
+
+
 function Write-Highlight {
     param([string]$msg)
     Write-Host $msg -ForegroundColor Cyan
