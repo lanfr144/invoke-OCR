@@ -118,7 +118,7 @@ if ($existingTask) {
 $actionScript = Join-Path $PSScriptRoot "Start-OCRWatcher.ps1"
 
 # Create action to run hidden powershell
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$actionScript`""
+$action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$actionScript`""
 # Trigger on user logon
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 # Run with highest privileges to avoid permission issues

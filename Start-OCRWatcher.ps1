@@ -24,6 +24,7 @@ $watcher.EnableRaisingEvents = $true
 
 # Define the action to take when a file is created
 $action = {
+    $InvokeScript = $Event.MessageData
     $path = $Event.SourceEventArgs.FullPath
     $name = $Event.SourceEventArgs.Name
     $changeType = $Event.SourceEventArgs.ChangeType
@@ -132,7 +133,7 @@ $action = {
 }
 
 # Register the event subscriber
-Register-ObjectEvent -InputObject $watcher -EventName "Created" -Action $action -SourceIdentifier "OCRWatcher_Created"
+Register-ObjectEvent -InputObject $watcher -EventName "Created" -Action $action -SourceIdentifier "OCRWatcher_Created" -MessageData $InvokeScript
 
 Write-Host "Monitoring $WatchFolder and subdirectories for new files. Press Ctrl+C to stop..."
 

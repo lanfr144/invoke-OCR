@@ -14,6 +14,11 @@ if (-not $isAdmin) {
 
 $Extensions = @(".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
+# Map HKCR: drive (not available by default in PowerShell)
+if (-not (Get-PSDrive -Name HKCR -ErrorAction SilentlyContinue)) {
+    New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT | Out-Null
+}
+
 Write-Host "Removing context menu handlers..."
 foreach ($ext in $Extensions) {
     $KeyPath = "HKCR:\SystemFileAssociations\$ext\shell\InvokeOCR"

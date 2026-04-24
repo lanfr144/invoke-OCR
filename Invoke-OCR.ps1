@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Performs OCR on PDF documents or images using Tesseract, Ghostscript, and PDFtk.
+    Performs intelligent OCR on PDF documents or images using Tesseract, Ghostscript, and PDFtk.
 
 .DESCRIPTION
     This script accepts a list of file paths (images or PDFs), either via parameter or pipeline.
@@ -10,7 +10,58 @@
     If the file is a PDF, it checks if text already exists. If text exists, it warns the user 
     and skips it, unless the -ForceOCR switch is passed. It explodes the PDF into high resolution 
     images using Ghostscript, OCRs each page using Tesseract, and merges them back together 
-    into a single PDF using PDFtk. The resulting file will end with "_ocr.pdf".
+    into a single PDF using PDFtk. 
+
+    The resulting file will end with "_ocr.pdf". It can also automatically move files to
+    archive directories and email the results via SMTP.
+
+.PARAMETER Path
+    The file path or array of file paths to process. Accepts pipeline input.
+
+.PARAMETER Language
+    One or many Tesseract language codes (e.g., eng, fra, deu). Default is eng+fra+deu+ltz+por+lat.
+
+.PARAMETER Dpi
+    DPI for PDF bursting via Ghostscript and Tesseract OCR. Default is 300.
+
+.PARAMETER Page
+    Specific page to process. If 0 or omitted, processes all pages.
+
+.PARAMETER WatermarkPdf
+    Path to a PDF file to use as a background watermark (philigram).
+
+.PARAMETER ThrottleLimit
+    Number of pages to process concurrently in Tesseract. Requires PowerShell 7. Default is 4.
+
+.PARAMETER MoveSourceDir
+    Directory to move the original PDF/image to after a successful scan.
+
+.PARAMETER MoveOcrDir
+    Directory to move the generated _ocr.pdf to after a successful scan.
+
+.PARAMETER MoveTxtDir
+    Directory to move the generated _ocr.txt to after a successful scan.
+
+.PARAMETER RemoveSource
+    Permanently deletes the original PDF/image after a successful scan.
+
+.PARAMETER EmailTo
+    Array of email addresses to send results to (e.g., "Mr Smith <a@b.com>").
+
+.PARAMETER EmailFiles
+    Which files to attach to the email. Options: Source, Ocr, Txt. Default is Ocr.
+
+.PARAMETER SmtpServer
+    SMTP Server address required to send emails.
+
+.PARAMETER SmtpPort
+    Port for the SMTP server. Default is 25.
+
+.PARAMETER SmtpUser
+    Username for SMTP authentication.
+
+.PARAMETER SmtpPassword
+    Password for SMTP authentication.
 
 .EXAMPLE
     # Basic usage:
@@ -21,13 +72,13 @@
     Get-ChildItem -Filter "*.pdf" | .\Invoke-OCR.ps1 -Language "eng+fra" -y -Silent -ForceOCR
 
 .EXAMPLE
-    # Dealing with spaces, accents, and hyphens at the beginning of file names:
-    .\Invoke-OCR.ps1 -Path 'C:\My Scans\-éxâmple file.pdf'
+    # Moving files to archive and emailing results:
+    .\Invoke-OCR.ps1 -Path "invoice.pdf" -MoveSourceDir "C:\Archive\Originals" -MoveOcrDir "C:\Archive\Processed" -EmailTo "finance@company.com" -SmtpServer "smtp.company.local"
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true)]
+    [Parameter(Mandatory = $true, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
     [Alias("FullName")]
     [string[]]$Path,
 
@@ -102,7 +153,7 @@ BEGIN {
     
     function Write-Err {
         param([string]$Message)
-        if (-not $Silent) { Write-Error $Message }
+        if (-not $Silent) { Write-Error -Message $Message }
     }
 
     function Write-SystemLog {
@@ -117,14 +168,16 @@ BEGIN {
                 [System.Diagnostics.EventLog]::CreateEventSource("Invoke-OCR", "Application")
             }
             [System.Diagnostics.EventLog]::WriteEntry("Invoke-OCR", $Message, $Type, 1)
-        } catch { }
+        }
+        catch { }
     }
 
     function Show-ErrorPopup {
         param([string]$Title, [string]$Message)
         try {
-            Start-Process "msg.exe" -ArgumentList "* `"$Title: $Message`"" -WindowStyle Hidden
-        } catch { }
+            Start-Process "msg.exe" -ArgumentList "* `"${Title}: $Message`"" -WindowStyle Hidden
+        }
+        catch { }
     }
 
     function Verify-Executable {
@@ -133,7 +186,8 @@ BEGIN {
             $output = & $ExePath $TestArg 2>&1
             $outStr = $output -join "`n"
             if ($outStr -match $RegexMatch) { return $true }
-        } catch { }
+        }
+        catch { }
         return $false
     }
     
@@ -268,14 +322,16 @@ PROCESS {
                 if ($txtBlock.Length -gt 5) {
                     $hasExistingText = $true
                 }
-            } catch { }
+            }
+            catch { }
 
             if ($hasExistingText) {
                 Write-Warn "Pre-check Warning: $($file.Name) appears to already contain a text layer."
                 if (-not $ForceOCR) {
                     Write-Info "Skipped $($file.Name). If you wish to re-OCR it to pick up missing textual graphics or schemas, bypass this validation using the -ForceOCR parameter."
                     continue
-                } else {
+                }
+                else {
                     Write-Info "Bypassing text lock (-ForceOCR supplied). Processing $($file.Name) anyway!"
                 }
             }
@@ -379,7 +435,8 @@ PROCESS {
                                 if ($pdftkProcess.ExitCode -ne 0) {
                                     $hasError = $true
                                     $errorMsg = "PDFtk failed to merge the PDFs with exit code $($pdftkProcess.ExitCode)."
-                                } else {
+                                }
+                                else {
                                     Write-Info "Applying watermark ($WatermarkPdf)..."
                                     $watermarkArgs = @(
                                         "`"$tempMergedPdf`"",
@@ -394,7 +451,8 @@ PROCESS {
                                         $errorMsg = "PDFtk failed to apply watermark with exit code $($wmProcess.ExitCode)."
                                     }
                                 }
-                            } else {
+                            }
+                            else {
                                 $allPdftkArgs += "`"$outPath`""
                                 if ($PdftkArgs) { $allPdftkArgs += $PdftkArgs }
                                 
@@ -442,7 +500,8 @@ PROCESS {
                 if ($tessProcess.ExitCode -ne 0) {
                     $hasError = $true
                     $errorMsg = "Tesseract failed directly with exit code $($tessProcess.ExitCode)."
-                } else {
+                }
+                else {
                     if ($WatermarkPdf -and (Test-Path -LiteralPath $WatermarkPdf)) {
                         $tempPdf = "$outPdfBaseDirect.pdf"
                         $tempWMPdf = "$outPdfBaseDirect.temp.pdf"
@@ -500,12 +559,12 @@ PROCESS {
                     if ($EmailFiles -contains "Txt" -and (Test-Path $outTxtPath)) { $attachments += $outTxtPath }
 
                     $mailParams = @{
-                        To = $EmailTo
-                        From = "Invoke-OCR <no-reply@localhost>"
-                        Subject = "OCR Completed: $($file.Name)"
-                        Body = "The document $($file.Name) was successfully processed in ${timeStr} seconds."
-                        SmtpServer = $SmtpServer
-                        Port = $SmtpPort
+                        To          = $EmailTo
+                        From        = "Invoke-OCR <no-reply@localhost>"
+                        Subject     = "OCR Completed: $($file.Name)"
+                        Body        = "The document $($file.Name) was successfully processed in ${timeStr} seconds."
+                        SmtpServer  = $SmtpServer
+                        Port        = $SmtpPort
                         Attachments = $attachments
                     }
                     if ($SmtpUser -and $SmtpPassword) {
@@ -513,7 +572,8 @@ PROCESS {
                         $mailParams.Credential = New-Object System.Management.Automation.PSCredential ($SmtpUser, $secPassword)
                     }
                     Send-MailMessage @mailParams -ErrorAction Stop
-                } catch {
+                }
+                catch {
                     Write-Warn "Failed to send email: $_"
                     Write-SystemLog "Failed to send email for $($file.Name): $_" "Warning"
                 }
@@ -528,7 +588,8 @@ PROCESS {
             }
             if ($MoveSourceDir -and (Test-Path -LiteralPath $MoveSourceDir)) {
                 Move-Item -LiteralPath $file.FullName -Destination $MoveSourceDir -Force
-            } elseif ($RemoveSource) {
+            }
+            elseif ($RemoveSource) {
                 Remove-Item -LiteralPath $file.FullName -Force
             }
         }

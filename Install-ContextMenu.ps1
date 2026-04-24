@@ -15,6 +15,11 @@ if (-not $isAdmin) {
 $ScriptPath = Join-Path $PSScriptRoot "Invoke-OCR.ps1"
 $Extensions = @(".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
+# Map HKCR: drive (not available by default in PowerShell)
+if (-not (Get-PSDrive -Name HKCR -ErrorAction SilentlyContinue)) {
+    New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT | Out-Null
+}
+
 Write-Host "Installing context menu handlers..."
 foreach ($ext in $Extensions) {
     $KeyPath = "HKCR:\SystemFileAssociations\$ext\shell\InvokeOCR"
