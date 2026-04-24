@@ -389,7 +389,7 @@ PROCESS {
                             
                             $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -NoNewWindow -PassThru
                             if ($tessProcess.ExitCode -ne 0) {
-                                return @{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $($tessProcess.ExitCode)." }
+                                return [PSCustomObject]@{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $($tessProcess.ExitCode)." }
                             }
                             
                             # Append page number header to the text file
@@ -400,7 +400,7 @@ PROCESS {
                                 Set-Content -LiteralPath $txtPath -Value $newContent
                             }
                             
-                            return @{ Success = $true; PdfPath = "`"$outPdfBase.pdf`""; TxtPath = $txtPath }
+                            return [PSCustomObject]@{ Success = $true; PdfPath = "`"$outPdfBase.pdf`""; TxtPath = $txtPath }
                         }
 
                         if ($PSVersionTable.PSVersion.Major -ge 7) {
