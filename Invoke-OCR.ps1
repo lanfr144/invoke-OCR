@@ -369,14 +369,9 @@ PROCESS {
                         $errorMsg = "Ghostscript completed but no images were extracted. Ensure Ghostscript handles this PDF properly."
                     }
                     else {
-                        Write-Info ("OCRing {0} pages in parallel (ThrottleLimit: {1})..." -f $images.Count, $ThrottleLimit)
-                        
-                        $results = $images | ForEach-Object -Parallel {
-                            $img = $_
-                            $tesseract = $using:tesseract
-                            $langStr = $using:langStr
-                            $Dpi = $using:Dpi
-                            $TesseractArgs = $using:TesseractArgs
+                        # Process each page with Tesseract (parallel on PS7+, sequential on PS5)
+                        $ocrScriptBlock = {
+                            param($img, $tesseract, $langStr, $Dpi, $TesseractArgs)
                             
                             $pageRegex = [regex]::Match($img.BaseName, '\d+')
                             $pageNum = if ($pageRegex.Success) { [int]$pageRegex.Value } else { 0 }
@@ -406,7 +401,21 @@ PROCESS {
                             }
                             
                             return @{ Success = $true; PdfPath = "`"$outPdfBase.pdf`""; TxtPath = $txtPath }
-                        } -ThrottleLimit $ThrottleLimit
+                        }
+
+                        if ($PSVersionTable.PSVersion.Major -ge 7) {
+                            Write-Info ("OCRing {0} pages in parallel (ThrottleLimit: {1})..." -f $images.Count, $ThrottleLimit)
+                            $results = $images | ForEach-Object -Parallel {
+                                $ocrBlock = $using:ocrScriptBlock
+                                & $ocrBlock $_ $using:tesseract $using:langStr $using:Dpi $using:TesseractArgs
+                            } -ThrottleLimit $ThrottleLimit
+                        }
+                        else {
+                            Write-Info ("OCRing {0} pages sequentially (PowerShell 5 - upgrade to PS7 for parallel processing)..." -f $images.Count)
+                            $results = foreach ($img in $images) {
+                                & $ocrScriptBlock $img $tesseract $langStr $Dpi $TesseractArgs
+                            }
+                        }
                         
                         $failed = $results | Where-Object { -not $_.Success }
                         if ($failed.Count -gt 0) {
