@@ -135,12 +135,25 @@ The `-EmailSubject`, `-EmailBody`, `-EmailFrom`, and `-EmailReplyTo` parameters 
 | `${fullname}` | Full absolute path | `C:\scans\invoice.pdf` |
 | `${directory}` | Directory containing the file | `C:\scans` |
 | `${extension}` | File extension (with dot) | `.pdf` |
-| `${dpi}` | DPI value used | `300` |
-| `${Language}` | Language string | `eng+fra+deu` |
 | `${elapsed}` | Processing time in seconds | `12.34` |
 | `${outpath}` | Path to generated `_ocr.pdf` | `C:\scans\invoice_ocr.pdf` |
 | `${outtxt}` | Path to generated `_ocr.txt` | `C:\scans\invoice_ocr.txt` |
 | `${date}` | Current date/time | `2026-04-25 08:30:00` |
+| `${dpi}` | DPI value used | `300` |
+| `${Language}` | Language string | `eng+fra+deu` |
+| `${Page}` | Page number (0 = all) | `0` |
+| `${ThrottleLimit}` | Parallel thread count | `4` |
+| `${WatermarkPdf}` | Watermark PDF path | `C:\watermarks\header.pdf` |
+| `${MoveSourceDir}` | Source archive directory | `C:\Archive\Originals` |
+| `${MoveOcrDir}` | OCR archive directory | `C:\Archive\Processed` |
+| `${MoveTxtDir}` | Text archive directory | `C:\Archive\Text` |
+| `${RemoveSource}` | Source deletion flag | `True` / `False` |
+| `${ForceOCR}` | Force OCR flag | `True` / `False` |
+| `${EmailTo}` | Recipient addresses | `user@company.com` |
+| `${EmailFiles}` | Attached file types | `Ocr, Txt` |
+| `${SmtpServer}` | SMTP server | `smtp.company.local` |
+| `${SmtpPort}` | SMTP port | `25` |
+| `${SmtpUser}` | SMTP username | `scanner` |
 
 **Example:**
 ```powershell

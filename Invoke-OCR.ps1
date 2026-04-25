@@ -49,17 +49,30 @@
     The parameters EmailSubject, EmailBody, EmailFrom, and EmailReplyTo support template
     variables that are expanded at runtime. Available placeholders:
 
-        ${filename}   - Source file name (e.g. invoice.pdf)
-        ${basename}   - File name without extension (e.g. invoice)
-        ${fullname}   - Full absolute path of the source file
-        ${directory}  - Directory containing the source file
-        ${extension}  - File extension including dot (e.g. .pdf)
-        ${dpi}        - DPI value used for processing
-        ${Language}   - Language string (e.g. eng+fra+deu)
-        ${elapsed}    - Processing time in seconds
-        ${outpath}    - Path to the generated _ocr.pdf
-        ${outtxt}     - Path to the generated _ocr.txt
-        ${date}       - Current date/time in yyyy-MM-dd HH:mm:ss format
+        ${filename}      - Source file name (e.g. invoice.pdf)
+        ${basename}      - File name without extension (e.g. invoice)
+        ${fullname}      - Full absolute path of the source file
+        ${directory}     - Directory containing the source file
+        ${extension}     - File extension including dot (e.g. .pdf)
+        ${elapsed}       - Processing time in seconds
+        ${outpath}       - Path to the generated _ocr.pdf
+        ${outtxt}        - Path to the generated _ocr.txt
+        ${date}          - Current date/time in yyyy-MM-dd HH:mm:ss format
+        ${dpi}           - DPI value used for processing
+        ${Language}      - Language string (e.g. eng+fra+deu)
+        ${Page}          - Page number processed (0 = all)
+        ${ThrottleLimit} - Parallel thread count
+        ${WatermarkPdf}  - Watermark PDF path (if set)
+        ${MoveSourceDir} - Source archive directory (if set)
+        ${MoveOcrDir}    - OCR output archive directory (if set)
+        ${MoveTxtDir}    - Text output archive directory (if set)
+        ${RemoveSource}  - Whether source is deleted (True/False)
+        ${ForceOCR}      - Whether ForceOCR was active (True/False)
+        ${EmailTo}       - Recipient addresses
+        ${EmailFiles}    - Attached file types
+        ${SmtpServer}    - SMTP server used
+        ${SmtpPort}      - SMTP port used
+        ${SmtpUser}      - SMTP username (if set)
 
 .PARAMETER Path
     The file path or array of file paths to process. Accepts pipeline input.
@@ -809,18 +822,35 @@ PROCESS {
                     if ($EmailFiles -contains "Txt" -and (Test-Path $outTxtPath)) { $attachments += $outTxtPath }
 
                     # Build template variables for email interpolation
+                    # Includes file info, processing results, AND all configurable parameters
                     $templateVars = @{
-                        filename  = $file.Name
-                        basename  = $file.BaseName
-                        fullname  = $file.FullName
-                        directory = $file.DirectoryName
-                        extension = $file.Extension
-                        dpi       = [string]$Dpi
-                        Language  = $langStr
-                        elapsed   = $timeStr
-                        outpath   = $outPath
-                        outtxt    = $outTxtPath
-                        date      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+                        # File information
+                        filename      = $file.Name
+                        basename      = $file.BaseName
+                        fullname      = $file.FullName
+                        directory     = $file.DirectoryName
+                        extension     = $file.Extension
+                        # Processing results
+                        elapsed       = $timeStr
+                        outpath       = $outPath
+                        outtxt        = $outTxtPath
+                        date          = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+                        # All configurable parameters
+                        dpi           = [string]$Dpi
+                        Language      = $langStr
+                        Page          = [string]$Page
+                        ThrottleLimit = [string]$ThrottleLimit
+                        WatermarkPdf  = if ($WatermarkPdf) { $WatermarkPdf } else { "" }
+                        MoveSourceDir = if ($MoveSourceDir) { $MoveSourceDir } else { "" }
+                        MoveOcrDir    = if ($MoveOcrDir) { $MoveOcrDir } else { "" }
+                        MoveTxtDir    = if ($MoveTxtDir) { $MoveTxtDir } else { "" }
+                        RemoveSource  = [string]$RemoveSource
+                        ForceOCR      = [string]$ForceOCR
+                        EmailTo       = ($EmailTo -join ", ")
+                        EmailFiles    = ($EmailFiles -join ", ")
+                        SmtpServer    = if ($SmtpServer) { $SmtpServer } else { "" }
+                        SmtpPort      = [string]$SmtpPort
+                        SmtpUser      = if ($SmtpUser) { $SmtpUser } else { "" }
                     }
 
                     $mailParams = @{
