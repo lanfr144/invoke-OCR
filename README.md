@@ -111,9 +111,79 @@ Process a PDF that *already has some text* (like a schema missing OCR), limit th
 | `-RemoveSource` | `Switch` | `$false` | Permanently deletes the original PDF/image after a successful scan. |
 | `-EmailTo`      | `String[]`| None | Array of email addresses (e.g., `"Mr Smith" <a@b.com>`) to send results to. |
 | `-EmailFiles`   | `String[]`| `Ocr` | Which files to attach. Options: `Source`, `Ocr`, `Txt`. |
+| `-EmailSubject` | `String` | `OCR Completed: ${filename}` | Email subject line. Supports template variables (see below). |
+| `-EmailBody`    | `String` | `The document ${filename} was successfully processed in ${elapsed} seconds.` | Email body. Supports template variables. |
+| `-EmailFrom`    | `String` | `Invoke-OCR <no-reply@localhost>` | Sender address. Supports template variables. |
+| `-EmailReplyTo` | `String` | None | Reply-To address. Supports template variables. |
 | `-SmtpServer`   | `String` | None | SMTP Server address required to send emails. |
 | `-SmtpPort`     | `Int`    | `25` | Port for the SMTP server. |
 | `-SmtpUser`     | `String` | None | Username for SMTP authentication. |
 | `-SmtpPassword` | `String` | None | Password for SMTP authentication. |
 
 *You can also directly inject overriding paths via `-TesseractPath`, `-GhostscriptPath`, and `-PdftkPath`.*
+
+---
+
+## 📧 Email Template Variables
+
+The `-EmailSubject`, `-EmailBody`, `-EmailFrom`, and `-EmailReplyTo` parameters support dynamic placeholders that are expanded at runtime:
+
+| Variable | Expands To | Example |
+| :--- | :--- | :--- |
+| `${filename}` | Source file name | `invoice.pdf` |
+| `${basename}` | File name without extension | `invoice` |
+| `${fullname}` | Full absolute path | `C:\scans\invoice.pdf` |
+| `${directory}` | Directory containing the file | `C:\scans` |
+| `${extension}` | File extension (with dot) | `.pdf` |
+| `${dpi}` | DPI value used | `300` |
+| `${Language}` | Language string | `eng+fra+deu` |
+| `${elapsed}` | Processing time in seconds | `12.34` |
+| `${outpath}` | Path to generated `_ocr.pdf` | `C:\scans\invoice_ocr.pdf` |
+| `${outtxt}` | Path to generated `_ocr.txt` | `C:\scans\invoice_ocr.txt` |
+| `${date}` | Current date/time | `2026-04-25 08:30:00` |
+
+**Example:**
+```powershell
+.\Invoke-OCR.ps1 -Path "report.pdf" -EmailTo "team@company.com" -SmtpServer "smtp.local" `
+    -EmailSubject 'Scan ready: ${filename}' `
+    -EmailBody 'The file "${basename}" was scanned at ${dpi} DPI using ${Language}. Took ${elapsed}s.'
+```
+
+---
+
+## 📋 Per-Directory Configuration (.ocrconfig)
+
+You can place a `.ocrconfig` file in any directory to automatically configure how files in that directory are processed. This works both with the background watcher and when running `Invoke-OCR.ps1` directly.
+
+**Command-line parameters always take precedence over `.ocrconfig` values.**
+
+### Format
+Simple `Key = Value` pairs. Lines starting with `#` or `'` are comments. Values can be quoted or unquoted.
+
+### Example `.ocrconfig`
+```ini
+# OCR Configuration for the finance department scans
+Language = fra+eng
+Dpi = 600
+ForceOCR = true
+
+# Email notifications
+EmailTo = finance@company.com
+EmailSubject = OCR Done: ${filename}
+EmailBody = File "${filename}" processed at ${dpi} DPI with ${Language}. Elapsed: ${elapsed}s.
+EmailFrom = Scanner <scanner@company.com>
+EmailReplyTo = admin@company.com
+SmtpServer = smtp.company.local
+SmtpPort = 587
+
+# Archive processed files
+MoveSourceDir = C:\Archive\Originals
+MoveOcrDir = C:\Archive\Processed
+```
+
+### Supported Keys
+
+All `Invoke-OCR.ps1` parameters can be set in the config file:
+
+`Language`, `Dpi`, `ForceOCR`, `RemoveSource`, `WatermarkPdf`, `MoveSourceDir`, `MoveOcrDir`, `MoveTxtDir`, `EmailTo`, `EmailSubject`, `EmailBody`, `EmailFrom`, `EmailReplyTo`, `SmtpServer`, `SmtpPort`, `SmtpUser`, `SmtpPassword`
+

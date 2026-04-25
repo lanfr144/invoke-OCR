@@ -1,6 +1,26 @@
 <#
 .SYNOPSIS
     Gets the current status of the InvokeOCR_Watcher Scheduled Task.
+
+.DESCRIPTION
+    Queries the Windows Task Scheduler for the InvokeOCR_Watcher task and displays
+    its current state with color-coded output:
+    - RUNNING (Green)  : The watcher is actively monitoring C:\scans for new files.
+    - READY (Yellow)   : The task is registered but not currently running.
+    - DISABLED (Gray)  : The task has been manually disabled in Task Scheduler.
+    - NOT INSTALLED (Red) : The task is not registered. Run Install-OCRWatcher.ps1.
+
+.EXAMPLE
+    .\Get-OCRWatcherStatus.ps1
+
+    Displays the current watcher status.
+
+.NOTES
+    Does not require Administrator privileges.
+
+    See also:
+    - Install-OCRWatcher.ps1 - Install the watcher
+    - Remove-OCRWatcher.ps1  - Uninstall the watcher
 #>
 
 $taskName = "InvokeOCR_Watcher"

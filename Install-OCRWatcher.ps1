@@ -1,6 +1,52 @@
 <#
 .SYNOPSIS
     Installs the OCR Watcher as a background Scheduled Task and verifies all prerequisites.
+
+.DESCRIPTION
+    This script performs a complete installation of the Invoke-OCR background watcher service.
+    It runs with automatic elevation to Administrator privileges.
+
+    The installation process:
+    1. Verifies PowerShell 7 (pwsh) is installed (required for parallel OCR processing)
+    2. Checks that Tesseract, Ghostscript, and PDFtk are available on the system
+    3. Creates the C:\scans folder structure with language-specific subdirectories:
+       - C:\scans\en -> English (eng)
+       - C:\scans\de -> German (deu)
+       - C:\scans\fr -> French (fra)
+       - C:\scans\lb -> Luxembourgish (ltz)
+    4. Registers a Windows Scheduled Task (InvokeOCR_Watcher) that:
+       - Triggers at user logon
+       - Runs hidden in the background
+       - Persists through reboots
+       - Works on battery power
+    5. Starts the watcher service immediately
+
+    The watcher monitors C:\scans and all subdirectories for new PDFs and images,
+    automatically processing them with Invoke-OCR.ps1. You can customize processing
+    per folder using .ocrconfig files (see Invoke-OCR.ps1 help for details).
+
+.EXAMPLE
+    .\Install-OCRWatcher.ps1
+
+    Installs the background watcher. Will auto-request Administrator elevation if needed.
+
+.NOTES
+    Requires: Administrator privileges (auto-elevates)
+    Requires: PowerShell 7+ (pwsh), Tesseract, Ghostscript, PDFtk
+
+    See also:
+    - Get-OCRWatcherStatus.ps1 - Check if the watcher is running
+    - Remove-OCRWatcher.ps1    - Uninstall the watcher
+    - Start-OCRWatcher.ps1     - The watcher script itself
+
+.LINK
+    https://github.com/UB-Mannheim/tesseract/wiki
+
+.LINK
+    https://ghostscript.com/releases/gsdnld.html
+
+.LINK
+    https://www.pdflabs.com/tools/pdftk-server/
 #>
 
 $ErrorActionPreference = "Stop"

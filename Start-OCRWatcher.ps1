@@ -3,9 +3,40 @@
     Background watcher script that monitors C:\scans and its subdirectories to automatically trigger Invoke-OCR.ps1.
 
 .DESCRIPTION
-    This script is designed to be run as a Scheduled Task. It uses System.IO.FileSystemWatcher to detect when 
-    new PDFs or images are dropped into C:\scans. Based on the subfolder (en, de, fr, lb), it maps to the correct 
-    Tesseract language and triggers Invoke-OCR.ps1.
+    This script is designed to be run as a Scheduled Task (registered by Install-OCRWatcher.ps1).
+    It uses System.IO.FileSystemWatcher to detect when new PDFs or images are dropped into C:\scans.
+    
+    Language detection priority:
+    1. Base default: eng+fra+deu+ltz+por+lat (all languages)
+    2. Directory-based override: en->eng, de->deu, fr->fra, lb->ltz
+    3. Per-directory .ocrconfig file (highest priority)
+
+    The .ocrconfig file supports all Invoke-OCR.ps1 parameters in Key=Value format.
+    See Get-Help Invoke-OCR.ps1 -Full for the complete list of supported config keys.
+
+    Supported file types: .pdf, .png, .jpg, .jpeg, .tif, .tiff, .bmp
+
+    Safety features:
+    - Waits up to 60 seconds for file locks to be released (scanner/OS writing)
+    - Ignores _ocr.pdf, _ocr.txt, and .err.log output files to prevent loops
+    - Gracefully cleans up FileSystemWatcher on Ctrl+C or termination
+
+.EXAMPLE
+    .\Start-OCRWatcher.ps1
+
+    Starts monitoring C:\scans. Usually run automatically by the Scheduled Task.
+
+.NOTES
+    This script is not intended to be run directly by users. Use Install-OCRWatcher.ps1
+    to register it as a background Scheduled Task.
+
+    See also:
+    - Install-OCRWatcher.ps1   - Register this script as a service
+    - Get-OCRWatcherStatus.ps1 - Check if the watcher is running
+    - Remove-OCRWatcher.ps1    - Uninstall the watcher
+
+.LINK
+    https://learn.microsoft.com/en-us/dotnet/api/system.io.filesystemwatcher
 #>
 
 $WatchFolder = "C:\scans"

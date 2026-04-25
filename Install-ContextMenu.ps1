@@ -1,6 +1,35 @@
 <#
 .SYNOPSIS
     Adds the "Make Searchable (Invoke-OCR)" option to the Windows Right-Click Context Menu.
+
+.DESCRIPTION
+    Registers a Windows Explorer context menu entry for supported file types that allows
+    right-clicking any PDF or image file and selecting "Make Searchable (Invoke-OCR)" to
+    trigger OCR processing directly from the file explorer.
+
+    Supported file extensions: .pdf, .png, .jpg, .jpeg, .bmp, .tif, .tiff
+
+    The context menu entry is added to the HKEY_CLASSES_ROOT registry under
+    SystemFileAssociations for each supported extension. The OCR runs hidden in the
+    background using PowerShell with -Silent and -y flags.
+
+    Requires Administrator privileges (auto-elevates if needed).
+    To remove the context menu, run Remove-ContextMenu.ps1.
+
+.EXAMPLE
+    .\Install-ContextMenu.ps1
+
+    Installs the right-click menu. Will auto-request Administrator elevation if needed.
+
+.NOTES
+    Requires: Administrator privileges (auto-elevates)
+    
+    The context menu runs Invoke-OCR.ps1 with -Silent -y flags for unattended processing.
+    If a .ocrconfig file exists in the same directory as the file, it will be used.
+
+    See also:
+    - Remove-ContextMenu.ps1 - Remove the context menu entry
+    - Invoke-OCR.ps1         - The OCR processing script
 #>
 
 # Auto-elevate to Administrator

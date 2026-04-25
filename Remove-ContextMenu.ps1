@@ -1,6 +1,24 @@
 <#
 .SYNOPSIS
     Removes the "Make Searchable (Invoke-OCR)" option from the Windows Right-Click Context Menu.
+
+.DESCRIPTION
+    Unregisters the Invoke-OCR context menu entry from Windows Explorer by removing the
+    registry keys under HKEY_CLASSES_ROOT\SystemFileAssociations for all supported
+    file extensions (.pdf, .png, .jpg, .jpeg, .bmp, .tif, .tiff).
+
+    Requires Administrator privileges (auto-elevates if needed).
+
+.EXAMPLE
+    .\Remove-ContextMenu.ps1
+
+    Removes the right-click menu. Will auto-request Administrator elevation if needed.
+
+.NOTES
+    Requires: Administrator privileges (auto-elevates)
+
+    See also:
+    - Install-ContextMenu.ps1 - Re-install the context menu entry
 #>
 
 # Auto-elevate to Administrator

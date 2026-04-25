@@ -15,23 +15,107 @@
     The resulting file will end with "_ocr.pdf". It can also automatically move files to
     archive directories and email the results via SMTP.
 
+    PARALLEL PROCESSING
+    On PowerShell 7+, pages are OCR'd in parallel using ForEach-Object -Parallel.
+    On PowerShell 5.1, pages are processed sequentially (consider upgrading for speed).
+
+    PER-DIRECTORY CONFIGURATION (.ocrconfig)
+    You can place a ".ocrconfig" file in the same directory as your source files to override
+    default parameters without passing them on the command line. The config file uses a simple
+    Key=Value format. Command-line parameters always take precedence over config file values.
+
+    Supported .ocrconfig keys:
+        Language      = fra+eng
+        Dpi           = 600
+        ForceOCR      = true
+        WatermarkPdf  = C:\watermarks\header.pdf
+        MoveSourceDir = C:\Archive\Originals
+        MoveOcrDir    = C:\Archive\Processed
+        MoveTxtDir    = C:\Archive\Text
+        RemoveSource  = true
+        EmailTo       = user@example.com
+        EmailSubject  = OCR Done: ${filename}
+        EmailBody     = File "${filename}" processed at ${dpi} DPI with ${Language}. Took ${elapsed}s.
+        EmailFrom     = Scanner <scanner@company.com>
+        EmailReplyTo  = admin@company.com
+        SmtpServer    = smtp.company.local
+        SmtpPort      = 587
+        SmtpUser      = scanner
+        SmtpPassword  = secret
+
+    Lines starting with # or ' are treated as comments. Values can be quoted or unquoted.
+
+    EMAIL TEMPLATE VARIABLES
+    The parameters EmailSubject, EmailBody, EmailFrom, and EmailReplyTo support template
+    variables that are expanded at runtime. Available placeholders:
+
+        ${filename}   - Source file name (e.g. invoice.pdf)
+        ${basename}   - File name without extension (e.g. invoice)
+        ${fullname}   - Full absolute path of the source file
+        ${directory}  - Directory containing the source file
+        ${extension}  - File extension including dot (e.g. .pdf)
+        ${dpi}        - DPI value used for processing
+        ${Language}   - Language string (e.g. eng+fra+deu)
+        ${elapsed}    - Processing time in seconds
+        ${outpath}    - Path to the generated _ocr.pdf
+        ${outtxt}     - Path to the generated _ocr.txt
+        ${date}       - Current date/time in yyyy-MM-dd HH:mm:ss format
+
 .PARAMETER Path
     The file path or array of file paths to process. Accepts pipeline input.
+    You can also pipe FileInfo objects from Get-ChildItem.
 
 .PARAMETER Language
     One or many Tesseract language codes (e.g., eng, fra, deu). Default is eng+fra+deu+ltz+por+lat.
+    See available languages: tesseract --list-langs
 
 .PARAMETER Dpi
     DPI for PDF bursting via Ghostscript and Tesseract OCR. Default is 300.
+    Higher values improve quality but increase processing time and file size.
 
 .PARAMETER Page
     Specific page to process. If 0 or omitted, processes all pages.
 
 .PARAMETER WatermarkPdf
     Path to a PDF file to use as a background watermark (philigram).
+    Applied via PDFtk's multibackground command after OCR.
 
 .PARAMETER ThrottleLimit
     Number of pages to process concurrently in Tesseract. Requires PowerShell 7. Default is 4.
+    Set higher on machines with many CPU cores for faster processing.
+
+.PARAMETER Yes
+    Bypasses the confirmation prompt asking if the script found the correct executables.
+    Alias: -y
+
+.PARAMETER Quiet
+    Suppresses standard output text (like "Extracting pages..."), but still prints errors/warnings.
+
+.PARAMETER Silent
+    Suppresses EVERYTHING. No success messages, no warnings, no errors to the console.
+    Designed for background/scheduled task usage.
+
+.PARAMETER ForceOCR
+    If the PDF already has a text layer, process it anyway. Useful for documents with
+    schemas or images that still need OCR despite having some existing text.
+
+.PARAMETER TesseractPath
+    Explicit path to the Tesseract executable. Overrides automatic discovery.
+
+.PARAMETER GhostscriptPath
+    Explicit path to the Ghostscript executable. Overrides automatic discovery.
+
+.PARAMETER PdftkPath
+    Explicit path to the PDFtk executable. Overrides automatic discovery.
+
+.PARAMETER TesseractArgs
+    Additional custom arguments to pass verbatim to Tesseract.
+
+.PARAMETER GhostscriptArgs
+    Additional custom arguments to pass verbatim to Ghostscript.
+
+.PARAMETER PdftkArgs
+    Additional custom arguments to pass verbatim to PDFtk.
 
 .PARAMETER MoveSourceDir
     Directory to move the original PDF/image to after a successful scan.
@@ -51,6 +135,21 @@
 .PARAMETER EmailFiles
     Which files to attach to the email. Options: Source, Ocr, Txt. Default is Ocr.
 
+.PARAMETER EmailSubject
+    Email subject line. Supports template variables (see DESCRIPTION).
+    Default: "OCR Completed: ${filename}"
+
+.PARAMETER EmailBody
+    Email body text. Supports template variables (see DESCRIPTION).
+    Default: "The document ${filename} was successfully processed in ${elapsed} seconds."
+
+.PARAMETER EmailFrom
+    Sender address for the email. Supports template variables.
+    Default: "Invoke-OCR <no-reply@localhost>"
+
+.PARAMETER EmailReplyTo
+    Reply-To address for the email. Supports template variables.
+
 .PARAMETER SmtpServer
     SMTP Server address required to send emails.
 
@@ -64,16 +163,66 @@
     Password for SMTP authentication.
 
 .EXAMPLE
-    # Basic usage:
     .\Invoke-OCR.ps1 -Path "document.pdf"
-    
-.EXAMPLE
-    # Automation usage avoiding questions and warnings:
-    Get-ChildItem -Filter "*.pdf" | .\Invoke-OCR.ps1 -Language "eng+fra" -y -Silent -ForceOCR
+
+    Basic usage: OCR a single PDF with default settings (6 languages, 300 DPI).
 
 .EXAMPLE
-    # Moving files to archive and emailing results:
+    Get-ChildItem -Filter "*.pdf" | .\Invoke-OCR.ps1 -Language "eng","fra" -y -Silent -ForceOCR
+
+    Automation: Process all PDFs in current folder silently with English+French only.
+
+.EXAMPLE
     .\Invoke-OCR.ps1 -Path "invoice.pdf" -MoveSourceDir "C:\Archive\Originals" -MoveOcrDir "C:\Archive\Processed" -EmailTo "finance@company.com" -SmtpServer "smtp.company.local"
+
+    Process, archive, and email the results.
+
+.EXAMPLE
+    .\Invoke-OCR.ps1 -Path "report.pdf" -EmailTo "boss@company.com" -EmailSubject "Scan ready: ${filename}" -EmailBody "Hi, the file ${filename} (${basename}) was scanned at ${dpi} DPI using ${Language}. Processing took ${elapsed}s." -SmtpServer "smtp.local"
+
+    Custom email template with variable interpolation.
+
+.EXAMPLE
+    .\Invoke-OCR.ps1 -Path "scan.pdf" -Dpi 600 -Language "deu" -ThrottleLimit 8 -ForceOCR
+
+    High-quality German-only OCR at 600 DPI with 8 parallel threads, forcing re-OCR.
+
+.NOTES
+    Author  : Invoke-OCR Project
+    Requires: PowerShell 5.1+ (PowerShell 7+ recommended for parallel processing)
+
+    PREREQUISITES - The following tools must be installed:
+
+    1. Tesseract OCR - The core OCR engine
+       Download : https://github.com/UB-Mannheim/tesseract/wiki
+       Man page : https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html
+       Reference: https://github.com/tesseract-ocr/tesseract/blob/main/doc/tesseract.1.asc
+
+    2. Ghostscript - PDF rendering and text detection
+       Download : https://ghostscript.com/releases/gsdnld.html
+       Docs     : https://ghostscript.com/docs/9.54.0/Use.htm
+
+    3. PDFtk Server - PDF merging and watermarking
+       Download : https://www.pdflabs.com/tools/pdftk-server/
+       Docs     : https://www.pdflabs.com/docs/pdftk-man-page/
+
+    4. PowerShell 7+ (optional, for parallel processing)
+       Download : https://aka.ms/powershell
+
+.LINK
+    https://github.com/UB-Mannheim/tesseract/wiki
+
+.LINK
+    https://ghostscript.com/releases/gsdnld.html
+
+.LINK
+    https://www.pdflabs.com/tools/pdftk-server/
+
+.LINK
+    https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html
+
+.LINK
+    https://www.pdflabs.com/docs/pdftk-man-page/
 #>
 
 [CmdletBinding()]
@@ -133,6 +282,10 @@ param(
     # Emailing
     [string[]]$EmailTo,
     [string[]]$EmailFiles = @("Ocr"),
+    [string]$EmailSubject = 'OCR Completed: ${filename}',
+    [string]$EmailBody = 'The document ${filename} was successfully processed in ${elapsed} seconds.',
+    [string]$EmailFrom = 'Invoke-OCR <no-reply@localhost>',
+    [string]$EmailReplyTo,
     [string]$SmtpServer,
     [int]$SmtpPort = 25,
     [string]$SmtpUser,
@@ -154,6 +307,41 @@ BEGIN {
     function Write-Err {
         param([string]$Message)
         if (-not $Silent) { Write-Error -Message $Message }
+    }
+
+    function Expand-Template {
+        param([string]$Template, [hashtable]$Variables)
+        $result = $Template
+        foreach ($key in $Variables.Keys) {
+            $result = $result -replace [regex]::Escape("`${$key}"), $Variables[$key]
+        }
+        return $result
+    }
+
+    function Import-OcrConfig {
+        param([string]$ConfigPath)
+        $config = @{}
+        if (-not (Test-Path -LiteralPath $ConfigPath)) { return $config }
+
+        $lines = Get-Content -LiteralPath $ConfigPath
+        foreach ($line in $lines) {
+            $line = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($line) -or $line -match "^(#|')") { continue }
+
+            $idx = $line.IndexOf('=')
+            if ($idx -gt 0) {
+                $key = $line.Substring(0, $idx).Trim()
+                $value = $line.Substring($idx + 1).Trim()
+
+                # Strip surrounding quotes if present
+                if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                    $value = $value.Substring(1, $value.Length - 2)
+                }
+                $config[$key] = $value
+            }
+        }
+        Write-Info "Loaded .ocrconfig from $ConfigPath ($($config.Count) settings)"
+        return $config
     }
 
     function Write-SystemLog {
@@ -282,6 +470,59 @@ PROCESS {
         $ext = $file.Extension.ToLower()
         $outPath = Join-Path $file.DirectoryName ($file.BaseName + "_ocr.pdf")
         $errPath = Join-Path $file.DirectoryName ($file.BaseName + ".err.log")
+
+        # Load per-directory .ocrconfig (CLI parameters take precedence)
+        $configPath = Join-Path $file.DirectoryName ".ocrconfig"
+        $ocrConfig = Import-OcrConfig $configPath
+
+        # Map for simple string/int parameters: ConfigKey -> VariableName
+        $configMap = @{
+            "Language"     = "Language"
+            "Dpi"          = "Dpi"
+            "WatermarkPdf" = "WatermarkPdf"
+            "MoveSourceDir"= "MoveSourceDir"
+            "MoveOcrDir"   = "MoveOcrDir"
+            "MoveTxtDir"   = "MoveTxtDir"
+            "EmailTo"      = "EmailTo"
+            "EmailSubject" = "EmailSubject"
+            "EmailBody"    = "EmailBody"
+            "EmailFrom"    = "EmailFrom"
+            "EmailReplyTo" = "EmailReplyTo"
+            "SmtpServer"   = "SmtpServer"
+            "SmtpPort"     = "SmtpPort"
+            "SmtpUser"     = "SmtpUser"
+            "SmtpPassword" = "SmtpPassword"
+        }
+
+        foreach ($cfgKey in $configMap.Keys) {
+            $varName = $configMap[$cfgKey]
+            if ($ocrConfig.ContainsKey($cfgKey) -and -not $PSBoundParameters.ContainsKey($varName)) {
+                $cfgValue = $ocrConfig[$cfgKey]
+                switch ($varName) {
+                    "Language"  { $Language = $cfgValue -split '\+'; $langStr = $cfgValue }
+                    "Dpi"       { $Dpi = [int]$cfgValue }
+                    "SmtpPort"  { $SmtpPort = [int]$cfgValue }
+                    "EmailTo"   { $EmailTo = @($cfgValue) }
+                    default     { Set-Variable -Name $varName -Value $cfgValue }
+                }
+            }
+        }
+
+        # Handle switch parameters from config
+        if ($ocrConfig.ContainsKey("ForceOCR") -and -not $PSBoundParameters.ContainsKey("ForceOCR")) {
+            if ($ocrConfig["ForceOCR"] -match "^(true|1|yes)$") { $ForceOCR = $true }
+        }
+        if ($ocrConfig.ContainsKey("RemoveSource") -and -not $PSBoundParameters.ContainsKey("RemoveSource")) {
+            if ($ocrConfig["RemoveSource"] -match "^(true|1|yes)$") { $RemoveSource = $true }
+        }
+
+        # Recalculate langStr if Language was overridden
+        if (-not $PSBoundParameters.ContainsKey("Language") -and -not $ocrConfig.ContainsKey("Language")) {
+            $langStr = $Language -join "+"
+        }
+        elseif ($PSBoundParameters.ContainsKey("Language")) {
+            $langStr = $Language -join "+"
+        }
 
         # Skip logic based on timestamps
         $shouldSkip = $false
@@ -567,14 +808,32 @@ PROCESS {
                     if ($EmailFiles -contains "Ocr") { $attachments += $outPath }
                     if ($EmailFiles -contains "Txt" -and (Test-Path $outTxtPath)) { $attachments += $outTxtPath }
 
+                    # Build template variables for email interpolation
+                    $templateVars = @{
+                        filename  = $file.Name
+                        basename  = $file.BaseName
+                        fullname  = $file.FullName
+                        directory = $file.DirectoryName
+                        extension = $file.Extension
+                        dpi       = [string]$Dpi
+                        Language  = $langStr
+                        elapsed   = $timeStr
+                        outpath   = $outPath
+                        outtxt    = $outTxtPath
+                        date      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+                    }
+
                     $mailParams = @{
                         To          = $EmailTo
-                        From        = "Invoke-OCR <no-reply@localhost>"
-                        Subject     = "OCR Completed: $($file.Name)"
-                        Body        = "The document $($file.Name) was successfully processed in ${timeStr} seconds."
+                        From        = (Expand-Template $EmailFrom $templateVars)
+                        Subject     = (Expand-Template $EmailSubject $templateVars)
+                        Body        = (Expand-Template $EmailBody $templateVars)
                         SmtpServer  = $SmtpServer
                         Port        = $SmtpPort
                         Attachments = $attachments
+                    }
+                    if ($EmailReplyTo) {
+                        $mailParams.ReplyTo = (Expand-Template $EmailReplyTo $templateVars)
                     }
                     if ($SmtpUser -and $SmtpPassword) {
                         $secPassword = ConvertTo-SecureString $SmtpPassword -AsPlainText -Force
