@@ -9,11 +9,11 @@
     The installation process:
     1. Verifies PowerShell 7 (pwsh) is installed (required for parallel OCR processing)
     2. Checks that Tesseract, Ghostscript, and PDFtk are available on the system
-    3. Creates the C:\scans folder structure with language-specific subdirectories:
-       - C:\scans\en -> English (eng)
-       - C:\scans\de -> German (deu)
-       - C:\scans\fr -> French (fra)
-       - C:\scans\lb -> Luxembourgish (ltz)
+    3. Creates the watch folder structure with language-specific subdirectories:
+       - <WatchFolder>\en -> English (eng)
+       - <WatchFolder>\de -> German (deu)
+       - <WatchFolder>\fr -> French (fra)
+       - <WatchFolder>\lb -> Luxembourgish (ltz)
     4. Registers a Windows Scheduled Task (InvokeOCR_Watcher) that:
        - Triggers at user logon
        - Runs hidden in the background
@@ -21,14 +21,22 @@
        - Works on battery power
     5. Starts the watcher service immediately
 
-    The watcher monitors C:\scans and all subdirectories for new PDFs and images,
+    The watcher monitors the folder and all subdirectories for new PDFs and images,
     automatically processing them with Invoke-OCR.ps1. You can customize processing
     per folder using .ocrconfig files (see Invoke-OCR.ps1 help for details).
+
+.PARAMETER WatchFolder
+    Root directory to monitor for incoming files. Default: C:\scans
 
 .EXAMPLE
     .\Install-OCRWatcher.ps1
 
-    Installs the background watcher. Will auto-request Administrator elevation if needed.
+    Installs with default watch folder C:\scans.
+
+.EXAMPLE
+    .\Install-OCRWatcher.ps1 -WatchFolder "D:\incoming\scans"
+
+    Installs with a custom watch directory.
 
 .NOTES
     Requires: Administrator privileges (auto-elevates)
@@ -48,15 +56,18 @@
 .LINK
     https://www.pdflabs.com/tools/pdftk-server/
 #>
+param(
+    [string]$WatchFolder = "C:\scans"
+)
 
 $ErrorActionPreference = "Stop"
 
-# Auto-elevate to Administrator
+# Auto-elevate to Administrator (re-pass WatchFolder)
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "Administrator privileges required. Requesting elevation..." -ForegroundColor Yellow
     $exe = (Get-Process -Id $PID).Path
-    Start-Process -FilePath $exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    Start-Process -FilePath $exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -WatchFolder `"$WatchFolder`"" -Verb RunAs
     exit
 }
 
@@ -130,7 +141,7 @@ if ($hasErrors) {
 
 # 3. Create Folders
 Write-Highlight "`nSetting up directories..."
-$baseFolder = "C:\scans"
+$baseFolder = $WatchFolder
 $subFolders = @("en", "de", "fr", "lb")
 
 if (-not (Test-Path $baseFolder)) {
@@ -164,7 +175,7 @@ if ($existingTask) {
 $actionScript = Join-Path $PSScriptRoot "Start-OCRWatcher.ps1"
 
 # Create action to run hidden powershell
-$action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$actionScript`""
+$action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$actionScript`" -WatchFolder `"$WatchFolder`""
 # Trigger on user logon
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 # Run with highest privileges to avoid permission issues
@@ -179,4 +190,4 @@ Write-Highlight "`nStarting the service for the first time..."
 Start-ScheduledTask -TaskName $taskName
 
 Write-Host "`nInstallation Complete! The background watcher is now running." -ForegroundColor Green
-Write-Host "You can now drop PDFs/images into C:\scans or its subfolders to automatically process them."
+Write-Host "You can now drop PDFs/images into $WatchFolder or its subfolders to automatically process them."

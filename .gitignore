@@ -1,0 +1,16 @@
+# Logs
+*.log
+*.log.bak
+
+# Error files
+*.err.log
+
+# Config files may contain passwords
+.ocrconfig
+
+# Syntax checker utility
+check_syntax.ps1
+
+# OS junk
+Thumbs.db
+desktop.ini

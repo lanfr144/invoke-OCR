@@ -173,7 +173,13 @@
     Username for SMTP authentication.
 
 .PARAMETER SmtpPassword
-    Password for SMTP authentication.
+    Password for SMTP authentication. Can also be set to "credential:<name>" to use
+    a securely stored credential (see Save-OcrCredential.ps1).
+
+.PARAMETER ValidateConfig
+    When set, the script validates .ocrconfig files in the target path directories
+    and exits without processing any files. Reports valid keys, unknown keys, and
+    parent config inheritance. Useful for testing config files before deployment.
 
 .EXAMPLE
     .\Invoke-OCR.ps1 -Path "document.pdf"
@@ -184,6 +190,11 @@
     Get-ChildItem -Filter "*.pdf" | .\Invoke-OCR.ps1 -Language "eng","fra" -y -Silent -ForceOCR
 
     Automation: Process all PDFs in current folder silently with English+French only.
+
+.EXAMPLE
+    .\Invoke-OCR.ps1 -Path "C:\scans" -ValidateConfig
+
+    Validate the .ocrconfig file in C:\scans without processing any files.
 
 .EXAMPLE
     .\Invoke-OCR.ps1 -Path "invoice.pdf" -MoveSourceDir "C:\Archive\Originals" -MoveOcrDir "C:\Archive\Processed" -EmailTo "finance@company.com" -SmtpServer "smtp.company.local"
@@ -302,7 +313,10 @@ param(
     [string]$SmtpServer,
     [int]$SmtpPort = 25,
     [string]$SmtpUser,
-    [string]$SmtpPassword
+    [string]$SmtpPassword,
+
+    # Validation mode: only validate .ocrconfig files, do not process
+    [switch]$ValidateConfig
 )
 
 BEGIN {
@@ -331,13 +345,27 @@ BEGIN {
         return $result
     }
 
-    function Import-OcrConfig {
-        param([string]$ConfigPath)
-        $config = @{}
-        if (-not (Test-Path -LiteralPath $ConfigPath)) { return $config }
+    # Valid config keys for validation
+    $script:validConfigKeys = @(
+        "Language", "Dpi", "Page", "WatermarkPdf", "ThrottleLimit",
+        "ForceOCR", "RemoveSource",
+        "TesseractPath", "GhostscriptPath", "PdftkPath",
+        "TesseractArgs", "GhostscriptArgs", "PdftkArgs",
+        "MoveSourceDir", "MoveOcrDir", "MoveTxtDir",
+        "EmailTo", "EmailFiles", "EmailSubject", "EmailBody",
+        "EmailFrom", "EmailReplyTo",
+        "SmtpServer", "SmtpPort", "SmtpUser", "SmtpPassword"
+    )
 
-        $lines = Get-Content -LiteralPath $ConfigPath
+    function Import-OcrConfigFile {
+        param([string]$FilePath)
+        $config = @{}
+        if (-not (Test-Path -LiteralPath $FilePath)) { return $config }
+
+        $lines = Get-Content -LiteralPath $FilePath
+        $lineNum = 0
         foreach ($line in $lines) {
+            $lineNum++
             $line = $line.Trim()
             if ([string]::IsNullOrWhiteSpace($line) -or $line -match "^(#|')") { continue }
 
@@ -350,16 +378,85 @@ BEGIN {
                 if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
                     $value = $value.Substring(1, $value.Length - 2)
                 }
+
+                # Validate key (#10)
+                if ($key -notin $script:validConfigKeys) {
+                    Write-Warn "Unknown config key '$key' at line $lineNum in $FilePath (did you mean one of: $($script:validConfigKeys -join ', '))"
+                }
+
                 $config[$key] = $value
             }
         }
-        Write-Info "Loaded .ocrconfig from $ConfigPath ($($config.Count) settings)"
         return $config
+    }
+
+    function Import-OcrConfig {
+        param([string]$ConfigPath)
+
+        # Hierarchical config: walk up from file directory to drive root, collecting configs
+        $configDir = Split-Path -Parent $ConfigPath
+        $configStack = @()
+
+        $currentDir = $configDir
+        while ($currentDir -and (Test-Path $currentDir)) {
+            $cfgFile = Join-Path $currentDir ".ocrconfig"
+            if (Test-Path -LiteralPath $cfgFile) {
+                $configStack += $cfgFile
+            }
+            $parentDir = Split-Path -Parent $currentDir
+            if ($parentDir -eq $currentDir) { break }  # reached root
+            $currentDir = $parentDir
+        }
+
+        # Merge from root to leaf (child overrides parent)
+        $merged = @{}
+        for ($i = $configStack.Count - 1; $i -ge 0; $i--) {
+            $cfg = Import-OcrConfigFile $configStack[$i]
+            foreach ($key in $cfg.Keys) {
+                $merged[$key] = $cfg[$key]
+            }
+        }
+
+        if ($merged.Count -gt 0) {
+            Write-Info "Loaded .ocrconfig ($($merged.Count) settings from $($configStack.Count) file(s))"
+        }
+
+        # Handle secure password via Windows Credential Manager (#8)
+        if ($merged.ContainsKey("SmtpPassword") -and $merged["SmtpPassword"] -match "^credential:(.+)$") {
+            $credName = $Matches[1]
+            try {
+                $credPath = Join-Path $env:USERPROFILE ".ocrCredentials_$credName.xml"
+                if (Test-Path -LiteralPath $credPath) {
+                    $cred = Import-Clixml -LiteralPath $credPath
+                    $merged["SmtpUser"] = $cred.UserName
+                    $merged["SmtpPassword"] = $cred.GetNetworkCredential().Password
+                    Write-Info "Loaded SMTP credentials from secure store '$credName'"
+                }
+                else {
+                    Write-Warn "Credential file not found: $credPath. Use Save-OcrCredential.ps1 to create it."
+                }
+            }
+            catch {
+                Write-Warn "Failed to load credential '$credName': $_"
+            }
+        }
+
+        return $merged
     }
 
     function Write-SystemLog {
         param([string]$Message, [string]$Type = "Information")
         $logPath = Join-Path $PSScriptRoot "ocr_service.log"
+
+        # Log rotation: rename to .log.bak if exceeds 5MB
+        if (Test-Path -LiteralPath $logPath) {
+            $logSize = (Get-Item -LiteralPath $logPath).Length
+            if ($logSize -gt 5MB) {
+                $bakPath = "$logPath.bak"
+                Move-Item -LiteralPath $logPath -Destination $bakPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
         $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         $line = "[$timestamp] [$Type] $Message"
         Add-Content -LiteralPath $logPath -Value $line -ErrorAction SilentlyContinue
@@ -376,7 +473,30 @@ BEGIN {
     function Show-ErrorPopup {
         param([string]$Title, [string]$Message)
         try {
-            Start-Process "msg.exe" -ArgumentList "* `"${Title}: $Message`"" -WindowStyle Hidden
+            # Try BurntToast module first (best experience)
+            if (Get-Module -ListAvailable -Name BurntToast -ErrorAction SilentlyContinue) {
+                Import-Module BurntToast -ErrorAction SilentlyContinue
+                New-BurntToastNotification -Text $Title, $Message -AppLogo $null -ErrorAction Stop
+                return
+            }
+
+            # Fallback: native .NET toast (Windows 10/11, requires loaded assemblies)
+            $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] 2>$null
+            if ($?) {
+                $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+                $textNodes = $template.GetElementsByTagName("text")
+                $textNodes.Item(0).AppendChild($template.CreateTextNode($Title)) | Out-Null
+                $textNodes.Item(1).AppendChild($template.CreateTextNode($Message)) | Out-Null
+                $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+                [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Invoke-OCR").Show($toast)
+                return
+            }
+        }
+        catch { }
+
+        # Last resort: msg.exe (works on Windows Pro/Enterprise)
+        try {
+            Start-Process "msg.exe" -ArgumentList "* `"${Title}: $Message`"" -WindowStyle Hidden -ErrorAction SilentlyContinue
         }
         catch { }
     }
@@ -460,12 +580,65 @@ BEGIN {
     if (-not $ghostscript) { Write-Err "Ghostscript could not be found via args, PATH, or default directories."; $halt = $true }
     if (-not $pdftk) { Write-Err "PDFtk could not be found via args, PATH, or default directories."; $halt = $true }
     
-    if ($halt) { throw "Missing required prerequisites." }
-    
-    Write-Info "Ready. All executables verified."
+    if (-not $ValidateConfig) {
+        if ($halt) { throw "Missing required prerequisites." }
+        Write-Info "Ready. All executables verified."
+    }
 }
 
 PROCESS {
+    # ValidateConfig mode: validate .ocrconfig files and exit
+    if ($ValidateConfig) {
+        foreach ($p in $Path) {
+            if ([string]::IsNullOrWhiteSpace($p)) { continue }
+            try {
+                $item = Get-Item -LiteralPath $p -ErrorAction Stop
+                $dir = if ($item.PSIsContainer) { $item.FullName } else { $item.DirectoryName }
+            }
+            catch {
+                Write-Err "Path not found: $p"
+                continue
+            }
+
+            $configFile = Join-Path $dir ".ocrconfig"
+            if (-not (Test-Path -LiteralPath $configFile)) {
+                Write-Host "No .ocrconfig found in $dir" -ForegroundColor Yellow
+                continue
+            }
+
+            Write-Host "`n=== Validating: $configFile ===" -ForegroundColor Cyan
+            $config = Import-OcrConfigFile $configFile
+            $errorCount = 0
+
+            foreach ($key in $config.Keys) {
+                if ($key -in $script:validConfigKeys) {
+                    Write-Host "  [OK] $key = $($config[$key])" -ForegroundColor Green
+                }
+                else {
+                    Write-Host "  [!!] Unknown key: '$key' = $($config[$key])" -ForegroundColor Red
+                    $errorCount++
+                }
+            }
+
+            # Also check for hierarchical parent configs
+            $parentDir = Split-Path -Parent $dir
+            if ($parentDir -and $parentDir -ne $dir) {
+                $parentConfig = Join-Path $parentDir ".ocrconfig"
+                if (Test-Path -LiteralPath $parentConfig) {
+                    Write-Host "  [INFO] Parent config found: $parentConfig (values will be inherited)" -ForegroundColor DarkCyan
+                }
+            }
+
+            if ($errorCount -eq 0) {
+                Write-Host "  Result: VALID ($($config.Count) keys)" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  Result: $errorCount INVALID key(s) found" -ForegroundColor Red
+            }
+        }
+        return
+    }
+
     $langStr = $Language -join "+"
 
     foreach ($p in $Path) {
@@ -641,9 +814,17 @@ PROCESS {
                             )
                             if ($TesseractArgs) { $tessArgs += $TesseractArgs }
                             
-                            $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -NoNewWindow -PassThru
-                            if ($tessProcess.ExitCode -ne 0) {
-                                return [PSCustomObject]@{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $($tessProcess.ExitCode)." }
+                            # Per-page retry logic: up to 2 retries
+                            $maxRetries = 2
+                            $lastExitCode = -1
+                            for ($retry = 0; $retry -le $maxRetries; $retry++) {
+                                if ($retry -gt 0) { Start-Sleep -Seconds 1 }
+                                $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -NoNewWindow -PassThru
+                                $lastExitCode = $tessProcess.ExitCode
+                                if ($lastExitCode -eq 0) { break }
+                            }
+                            if ($lastExitCode -ne 0) {
+                                return [PSCustomObject]@{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $lastExitCode after $($maxRetries + 1) attempts." }
                             }
                             
                             # Append page number header to the text file

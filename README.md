@@ -6,15 +6,19 @@ A robust, intelligent PowerShell automation script designed to seamlessly extrac
 
 - **Intelligent Pre-flight Checks**: Uses `Ghostscript` to invisibly scan PDFs to see if they already contain a text-layer. If they do, it saves you processing time by aggressively skipping them (unless bypassed via `-ForceOCR`).
 - **Parallel Processing Engine**: Natively uses PowerShell 7's `ForEach-Object -Parallel` to OCR multiple pages simultaneously, drastically reducing processing time.
+- **Per-Page Retry Logic**: If Tesseract fails on a page (corruption, memory spike), the script automatically retries up to 2 times before marking it as failed.
 - **Dynamic Path Discovery**: No need to hardcode paths. The script natively hunts for your executables checking your user arguments, scanning your system `$env:PATH`, and recursively digging through your `C:\Program Files` looking for your missing binaries (automatically ignoring uninstallers).
 - **Text & Page Generation**: Automatically extracts and compiles a `_ocr.txt` file alongside your PDF, intelligently injecting `--- PAGE X ---` headers to split up the text data.
 - **Watermarking (Philigram)**: Built-in support to seamlessly stamp a custom watermark across all your generated pages using PDFtk.
 - **Timestamp Logic**: Avoids re-processing the same files over and over. If an `_ocr.pdf` already exists and is newer than the source, the script gracefully moves onto the next task.
-- **Fail-safe Error Logging**: A failure doesn't crash the loop. If a specific page corrupts during Ghostscript bursting or Tesseract parsing, the script catches it, isolates a `document.err.log` file, and keeps working through your pipeline. 
-- **Automated Emailing**: Natively hooks into an SMTP server to automatically email users the OCR'd PDFs and text files as soon as they finish processing.
+- **Fail-safe Error Logging**: A failure doesn't crash the loop. If a specific page corrupts during Ghostscript bursting or Tesseract parsing, the script catches it, isolates a `document.err.log` file, and keeps working through your pipeline.
+- **Log Rotation**: The `ocr_service.log` file is automatically rotated when it exceeds 5MB, preventing disk space issues on long-running systems.
+- **Automated Emailing**: Natively hooks into an SMTP server with customizable email templates using `${variable}` placeholders. Supports secure credential storage via Windows DPAPI.
 - **Smart Archiving**: Move the original source files and output files to separate backup directories automatically, or completely delete the original source when finished to keep your drop folders clean.
 - **Windows Event Logging**: Every file processed is securely logged to the native Windows Event Viewer (Application log), recording exact processing times and success/failure states.
-- **Desktop Notifications**: If the background watcher encounters a corrupted file, it instantly triggers a native Windows Toast Notification to alert you of the failure.
+- **Desktop Notifications**: Uses native Windows Toast Notifications (BurntToast or .NET API) with automatic fallback to `msg.exe` on older systems.
+- **Hierarchical Config Files**: Place `.ocrconfig` files in any directory for per-folder settings. Child directories inherit parent configs, allowing base defaults with local overrides.
+- **Config Validation**: Built-in `-ValidateConfig` flag and standalone `Test-OcrConfig.ps1` script to catch typos and invalid keys before deployment.
 - **Bulletproof Parsing**: Fully compatible with `-LiteralPath` so filenames with spaces, hyphens (`-`), brackets (`[]`), or foreign accents never break your shell!
 
 ## ⚙️ Prerequisites
@@ -33,21 +37,24 @@ This script acts as the orchestration layer between three powerful open-source u
 
 You can transform this script into a fully automated 24/7 background service! When installed, you can simply drop a file into a specific folder, and it will be silently processed in the background.
 
-The system will automatically generate these folders for you on the C:\ drive:
-- `C:\scans\en` ➔ Maps to `-Language eng`
-- `C:\scans\fr` ➔ Maps to `-Language fra`
-- `C:\scans\de` ➔ Maps to `-Language deu`
-- `C:\scans\lb` ➔ Maps to `-Language ltz`
-- `C:\scans` ➔ Base default mapping
+The default watch folder is `C:\scans`, but you can customize it with the `-WatchFolder` parameter.
+Language-specific subdirectories are created automatically:
+- `<WatchFolder>\en` ➔ Maps to `-Language eng`
+- `<WatchFolder>\fr` ➔ Maps to `-Language fra`
+- `<WatchFolder>\de` ➔ Maps to `-Language deu`
+- `<WatchFolder>\lb` ➔ Maps to `-Language ltz`
+- `<WatchFolder>` ➔ Base default mapping (all languages)
+
+The watcher features automatic crash recovery (5 retries with exponential backoff) and duplicate event suppression to prevent double-processing.
 
 ### Installation & Management
 
-The project includes 3 management scripts to control your background service:
+The project includes management scripts to control your background service:
 
-1. **Install the Service**: Run `.\Install-OCRWatcher.ps1` 
-   - *This will check if you have PowerShell 7 and all prerequisites installed, generate the `C:\scans` folder structure, and register a hidden Windows Scheduled Task that boots on startup.*
+1. **Install the Service**: Run `.\Install-OCRWatcher.ps1 [-WatchFolder "D:\custom"]`
+   - *Checks prerequisites, creates folder structure, registers a hidden Scheduled Task.*
 2. **Check Status**: Run `.\Get-OCRWatcherStatus.ps1`
-   - *Verifies if the background listener is currently `RUNNING`, `DISABLED`, or `READY`.*
+   - *Verifies if the listener is currently `RUNNING`, `DISABLED`, or `READY`.*
 3. **Uninstall the Service**: Run `.\Remove-OCRWatcher.ps1`
    - *Completely unregisters and deletes the background task from your system.*
 
@@ -118,7 +125,8 @@ Process a PDF that *already has some text* (like a schema missing OCR), limit th
 | `-SmtpServer`   | `String` | None | SMTP Server address required to send emails. |
 | `-SmtpPort`     | `Int`    | `25` | Port for the SMTP server. |
 | `-SmtpUser`     | `String` | None | Username for SMTP authentication. |
-| `-SmtpPassword` | `String` | None | Password for SMTP authentication. |
+| `-SmtpPassword` | `String` | None | Password for SMTP auth. Use `credential:<name>` for secure DPAPI storage. |
+| `-ValidateConfig` | `Switch` | `$false` | Validate `.ocrconfig` files only — do not process any files. |
 
 *You can also directly inject overriding paths via `-TesseractPath`, `-GhostscriptPath`, and `-PdftkPath`.*
 
@@ -198,5 +206,48 @@ MoveOcrDir = C:\Archive\Processed
 
 All `Invoke-OCR.ps1` parameters can be set in the config file:
 
-`Language`, `Dpi`, `ForceOCR`, `RemoveSource`, `WatermarkPdf`, `MoveSourceDir`, `MoveOcrDir`, `MoveTxtDir`, `EmailTo`, `EmailSubject`, `EmailBody`, `EmailFrom`, `EmailReplyTo`, `SmtpServer`, `SmtpPort`, `SmtpUser`, `SmtpPassword`
+`Language`, `Dpi`, `Page`, `ForceOCR`, `RemoveSource`, `WatermarkPdf`, `ThrottleLimit`, `MoveSourceDir`, `MoveOcrDir`, `MoveTxtDir`, `EmailTo`, `EmailSubject`, `EmailBody`, `EmailFrom`, `EmailReplyTo`, `SmtpServer`, `SmtpPort`, `SmtpUser`, `SmtpPassword`
 
+### Hierarchical Inheritance
+
+Config files are inherited from parent directories. A `.ocrconfig` in `C:\scans` provides defaults, and a `.ocrconfig` in `C:\scans\finance` overrides only the keys it defines:
+
+```
+C:\scans\.ocrconfig          → Base: Dpi=300, Language=eng+fra
+C:\scans\finance\.ocrconfig  → Override: Language=fra, EmailTo=finance@co.com
+```
+
+Files in `C:\scans\finance\` get: `Dpi=300, Language=fra, EmailTo=finance@co.com`
+
+---
+
+## 🔐 Secure Credential Storage
+
+Instead of storing SMTP passwords in plain text `.ocrconfig` files, you can use Windows DPAPI encryption:
+
+1. **Save credentials**: Run `.\Save-OcrCredential.ps1 -Name "office365"`
+2. **Reference in .ocrconfig**: `SmtpPassword = credential:office365`
+
+The credential file is encrypted with your Windows account and cannot be read by other users or on other machines.
+
+---
+
+## ✅ Config Validation
+
+Two methods to validate `.ocrconfig` files:
+
+### Standalone Script
+```powershell
+# Validate a single directory
+.\Test-OcrConfig.ps1 -Path "C:\scans\finance"
+
+# Recursively validate all configs
+.\Test-OcrConfig.ps1 -Path "C:\scans" -Recurse
+```
+
+### Inline Flag
+```powershell
+.\Invoke-OCR.ps1 -Path "C:\scans\finance" -ValidateConfig
+```
+
+Both methods check for unknown keys (with typo suggestions), duplicate keys, missing credential files, and parent config inheritance.
