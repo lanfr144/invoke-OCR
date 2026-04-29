@@ -50,7 +50,8 @@
     https://learn.microsoft.com/en-us/dotnet/api/system.io.filesystemwatcher
 #>
 param(
-    [string]$WatchFolder = "C:\scans"
+    [string]$WatchFolder = "C:\scans",
+    [switch]$PassThru
 )
 
 $InvokeScript = Join-Path $PSScriptRoot "Invoke-OCR.ps1"
@@ -239,7 +240,11 @@ while ($retryCount -le $maxRetries) {
         Write-Error -Message "Watcher error: $_"
         if ($retryCount -gt $maxRetries) {
             Write-Error -Message "Maximum retries ($maxRetries) exceeded. Watcher stopped."
-            exit 1
+            if ($PassThru) { [PSCustomObject]@{ ExitCode = 1; Message = "Failed" } }
+            return 1
         }
     }
 }
+
+if ($PassThru) { [PSCustomObject]@{ ExitCode = 0; Message = "Clean exit" } }
+return 0

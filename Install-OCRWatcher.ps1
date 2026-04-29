@@ -57,7 +57,8 @@
     https://www.pdflabs.com/tools/pdftk-server/
 #>
 param(
-    [string]$WatchFolder = "C:\scans"
+    [string]$WatchFolder = "C:\scans",
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,8 +68,9 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) {
     Write-Host "Administrator privileges required. Requesting elevation..." -ForegroundColor Yellow
     $exe = (Get-Process -Id $PID).Path
-    Start-Process -FilePath $exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -WatchFolder `"$WatchFolder`"" -Verb RunAs
-    exit
+    $passThruArg = if ($PassThru) { "-PassThru" } else { "" }
+    Start-Process -FilePath $exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -WatchFolder `"$WatchFolder`" $passThruArg" -Verb RunAs
+    return 0
 }
 
 
@@ -136,7 +138,8 @@ foreach ($prog in $programs) {
 
 if ($hasErrors) {
     Write-Host "`nInstallation aborted. Please install the missing prerequisites and try again." -ForegroundColor Red
-    exit 1
+    if ($PassThru) { [PSCustomObject]@{ ExitCode = 1; Message = "Prerequisites missing" } }
+    return 1
 }
 
 # 3. Create Folders
@@ -191,3 +194,6 @@ Start-ScheduledTask -TaskName $taskName
 
 Write-Host "`nInstallation Complete! The background watcher is now running." -ForegroundColor Green
 Write-Host "You can now drop PDFs/images into $WatchFolder or its subfolders to automatically process them."
+
+if ($PassThru) { [PSCustomObject]@{ ExitCode = 0; Message = "Success" } }
+return 0

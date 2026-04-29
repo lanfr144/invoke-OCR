@@ -50,21 +50,16 @@ param(
     [Alias("FullName")]
     [string[]]$Path,
 
-    [switch]$Recurse
+    [switch]$Recurse,
+    [switch]$PassThru
 )
 
 BEGIN {
-    # Valid config keys (must match Invoke-OCR.ps1)
-    $validKeys = @(
-        "Language", "Dpi", "Page", "WatermarkPdf", "ThrottleLimit",
-        "ForceOCR", "RemoveSource",
-        "TesseractPath", "GhostscriptPath", "PdftkPath",
-        "TesseractArgs", "GhostscriptArgs", "PdftkArgs",
-        "MoveSourceDir", "MoveOcrDir", "MoveTxtDir",
-        "EmailTo", "EmailFiles", "EmailSubject", "EmailBody",
-        "EmailFrom", "EmailReplyTo",
-        "SmtpServer", "SmtpPort", "SmtpUser", "SmtpPassword"
-    )
+    $moduleRoot = Join-Path $PSScriptRoot 'Modules'
+    Import-Module (Join-Path $moduleRoot 'OcrConfig.psm1') -Force
+
+    # Valid config keys
+    $validKeys = Get-ValidConfigKeys
 
     $totalFiles = 0
     $totalErrors = 0
@@ -205,4 +200,15 @@ END {
     else {
         Write-Host "Total errors: $totalErrors" -ForegroundColor Red
     }
+
+    $exitCode = if ($totalErrors -eq 0) { 0 } else { 1 }
+    
+    if ($PassThru) {
+        [PSCustomObject]@{
+            TotalFiles = $totalFiles
+            TotalErrors = $totalErrors
+            Success = ($totalErrors -eq 0)
+        }
+    }
+    return $exitCode
 }
