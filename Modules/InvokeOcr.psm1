@@ -77,11 +77,14 @@ param(
     # Skip extracting PDF form fields
     [switch]$SkipFieldsExtract
 )
-
 BEGIN {
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
     function Verify-Executable {
         param([string]$ExePath, [string]$TestArg, [string]$RegexMatch)
         try {
+            Write-Verbose "`"$ExePath`" $($TestArg -join ' ')"
             $output = & $ExePath $TestArg 2>&1
             $outStr = $output -join "`n"
             if ($outStr -match $RegexMatch) { return $true }
@@ -224,11 +227,16 @@ PROCESS {
     $langStr = $Language -join "+"
 
     foreach ($p in $Path) {
+        Write-Verbose "Processing Path element: '$p'"
         $startTime = Get-Date
-        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        if ([string]::IsNullOrWhiteSpace($p)) { 
+            Write-Verbose "Path element is null or whitespace. Skipping."
+            continue 
+        }
 
         try {
             $file = Get-Item -LiteralPath $p -ErrorAction Stop
+            Write-Verbose "Resolved file: $($file.FullName)"
         }
         catch {
             Write-Err "File not found: $p"
@@ -300,24 +308,27 @@ PROCESS {
             $langStr = $Language -join "+"
         }
 
-        # Skip logic based on timestamps
+        # Skip logic based on timestamps (unless ForceOCR is active)
         $shouldSkip = $false
-        if (Test-Path -LiteralPath $outPath) {
-            $outFileItem = Get-Item -LiteralPath $outPath
-            if ($outFileItem.LastWriteTime -ge $file.LastWriteTime) {
-                Write-Info "Skipping $($file.Name) - OCR file already exists and is up-to-date."
-                $shouldSkip = $true
+        if (-not $ForceOCR) {
+            if (Test-Path -LiteralPath $outPath) {
+                $outFileItem = Get-Item -LiteralPath $outPath
+                if ($outFileItem.LastWriteTime -ge $file.LastWriteTime) {
+                    Write-Info "Skipping $($file.Name) - OCR file already exists and is up-to-date."
+                    $shouldSkip = $true
+                }
             }
-        }
-        elseif (Test-Path -LiteralPath $errPath) {
-            $errFileItem = Get-Item -LiteralPath $errPath
-            if ($errFileItem.LastWriteTime -ge $file.LastWriteTime) {
-                Write-Info "Skipping $($file.Name) - error log already exists and is up-to-date. (Fix error then delete log to retry)"
-                $shouldSkip = $true
+            elseif (Test-Path -LiteralPath $errPath) {
+                $errFileItem = Get-Item -LiteralPath $errPath
+                if ($errFileItem.LastWriteTime -ge $file.LastWriteTime) {
+                    Write-Info "Skipping $($file.Name) - error log already exists and is up-to-date. (Fix error then delete log to retry)"
+                    $shouldSkip = $true
+                }
             }
         }
 
         if ($shouldSkip) {
+            Write-Verbose "Skipping file $($file.FullName) because _ocr.pdf or .err.log already exists."
             continue
         }
 
@@ -334,6 +345,7 @@ PROCESS {
             $hasExistingText = $false
             try {
                 $txtCheckArgs = @("-q", "-dNODISPLAY", "-dBATCH", "-dNOPAUSE", "-sDEVICE=txtwrite", "-sOutputFile=-", "`"$($file.FullName)`"")
+                Write-Verbose "`"$ghostscript`" $($txtCheckArgs -join ' ')"
                 $txtOutput = & $ghostscript $txtCheckArgs 2>&1
                 $txtBlock = ($txtOutput -join "").Trim()
                 if ($txtBlock.Length -gt 5) {
@@ -362,12 +374,14 @@ PROCESS {
             if (-not $SkipMetadataExtract) {
                 Write-Info "Extracting metadata from PDF..."
                 $dumpMetaArgs = @("`"$($file.FullName)`"", "dump_data_utf8", "output", "`"$metaTxtPath`"")
+                Write-Verbose "`"$pdftk`" $($dumpMetaArgs -join ' ')"
                 Start-Process -FilePath $pdftk -ArgumentList $dumpMetaArgs -Wait -WindowStyle Hidden | Out-Null
             }
 
             if (-not $SkipFieldsExtract) {
                 Write-Info "Extracting fields from PDF..."
                 $dumpFieldsArgs = @("`"$($file.FullName)`"", "dump_data_fields_utf8", "output", "`"$fieldsTxtPath`"")
+                Write-Verbose "`"$pdftk`" $($dumpFieldsArgs -join ' ')"
                 Start-Process -FilePath $pdftk -ArgumentList $dumpFieldsArgs -Wait -WindowStyle Hidden | Out-Null
             }
             
@@ -388,6 +402,7 @@ PROCESS {
                 $gsArgs += "`"$($file.FullName)`""
                 if ($GhostscriptArgs) { $gsArgs += $GhostscriptArgs }
                 
+                Write-Verbose "`"$ghostscript`" $($gsArgs -join ' ')"
                 $gsProcess = Start-Process -FilePath $ghostscript -ArgumentList $gsArgs -Wait -WindowStyle Hidden -PassThru
                 if ($gsProcess.ExitCode -ne 0) {
                     $hasError = $true
@@ -403,12 +418,16 @@ PROCESS {
                     else {
                         if ($PSVersionTable.PSVersion.Major -ge 7) {
                             Write-Info ("OCRing {0} pages in parallel (ThrottleLimit: {1})..." -f $images.Count, $ThrottleLimit)
+                            $originalPdf = $file.FullName
                             $results = $images | ForEach-Object -Parallel {
                                 $img = $_
                                 $tesseract = $using:tesseract
                                 $langStr = $using:langStr
                                 $Dpi = $using:Dpi
                                 $TesseractArgs = $using:TesseractArgs
+                                $ghostscript = $using:ghostscript
+                                $pdftk = $using:pdftk
+                                $originalPdf = $using:originalPdf
 
                                 $pageRegex = [regex]::Match($img.BaseName, '\d+')
                                 $pageNum = if ($pageRegex.Success) { [int]$pageRegex.Value } else { 0 }
@@ -429,12 +448,31 @@ PROCESS {
                                 $lastExitCode = -1
                                 for ($retry = 0; $retry -le $maxRetries; $retry++) {
                                     if ($retry -gt 0) { Start-Sleep -Seconds 1 }
+                                    Write-Verbose "`"$tesseract`" $($tessArgs -join ' ')"
                                     $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -WindowStyle Hidden -PassThru
                                     $lastExitCode = $tessProcess.ExitCode
                                     if ($lastExitCode -eq 0) { break }
                                 }
                                 if ($lastExitCode -ne 0) {
-                                    return [PSCustomObject]@{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $lastExitCode after $($maxRetries + 1) attempts." }
+                                    $errorRawPdf = "$outPdfBase.raw.pdf"
+                                    $errorWmPdf = "$outPdfBase.wm.pdf"
+                                    
+                                    $catArgs = @("`"$originalPdf`"", "cat", [string]$pageNum, "output", "`"$errorRawPdf`"")
+                                    Start-Process -FilePath $pdftk -ArgumentList $catArgs -Wait -WindowStyle Hidden | Out-Null
+                                    
+                                    $gsWmArgs = @("-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite", "-sOutputFile=`"$errorWmPdf`"", "-c", "`"<< /PageSize [595 842] >> setpagedevice /Helvetica-Bold findfont 100 scalefont setfont .8 .8 .8 setrgbcolor 100 400 moveto 45 rotate (ERROR) show`"")
+                                    Start-Process -FilePath $ghostscript -ArgumentList $gsWmArgs -Wait -WindowStyle Hidden | Out-Null
+                                    
+                                    $stampArgs = @("`"$errorRawPdf`"", "multibackground", "`"$errorWmPdf`"", "output", "`"$outPdfBase.pdf`"")
+                                    Start-Process -FilePath $pdftk -ArgumentList $stampArgs -Wait -WindowStyle Hidden | Out-Null
+                                    
+                                    $txtPath = "$outPdfBase.txt"
+                                    $newContent = "--- PAGE $pageNum ---`r`n[OCR ERROR] Tesseract failed for this page. Original page retained.`r`n"
+                                    Set-Content -LiteralPath $txtPath -Value $newContent
+                                    
+                                    Remove-Item -LiteralPath $errorRawPdf, $errorWmPdf -Force -ErrorAction SilentlyContinue
+                                    
+                                    return [PSCustomObject]@{ Success = $true; PartialError = $true; ErrorMsg = "Tesseract failed on $($img.Name). Inserted original page with Error watermark."; PdfPath = "`"$outPdfBase.pdf`""; TxtPath = $txtPath }
                                 }
                                 
                                 # Append page number header to the text file
@@ -450,6 +488,7 @@ PROCESS {
                         }
                         else {
                             Write-Info ("OCRing {0} pages sequentially (PowerShell 5 - upgrade to PS7 for parallel processing)..." -f $images.Count)
+                            $originalPdf = $file.FullName
                             $results = foreach ($img in $images) {
                                 $pageRegex = [regex]::Match($img.BaseName, '\d+')
                                 $pageNum = if ($pageRegex.Success) { [int]$pageRegex.Value } else { 0 }
@@ -470,12 +509,31 @@ PROCESS {
                                 $lastExitCode = -1
                                 for ($retry = 0; $retry -le $maxRetries; $retry++) {
                                     if ($retry -gt 0) { Start-Sleep -Seconds 1 }
+                                    Write-Verbose "`"$tesseract`" $($tessArgs -join ' ')"
                                     $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -WindowStyle Hidden -PassThru
                                     $lastExitCode = $tessProcess.ExitCode
                                     if ($lastExitCode -eq 0) { break }
                                 }
                                 if ($lastExitCode -ne 0) {
-                                    [PSCustomObject]@{ Success = $false; ErrorMsg = "Tesseract failed on $($img.Name) with exit code $lastExitCode after $($maxRetries + 1) attempts." }
+                                    $errorRawPdf = "$outPdfBase.raw.pdf"
+                                    $errorWmPdf = "$outPdfBase.wm.pdf"
+                                    
+                                    $catArgs = @("`"$originalPdf`"", "cat", [string]$pageNum, "output", "`"$errorRawPdf`"")
+                                    Start-Process -FilePath $pdftk -ArgumentList $catArgs -Wait -WindowStyle Hidden | Out-Null
+                                    
+                                    $gsWmArgs = @("-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite", "-sOutputFile=`"$errorWmPdf`"", "-c", "`"<< /PageSize [595 842] >> setpagedevice /Helvetica-Bold findfont 100 scalefont setfont .8 .8 .8 setrgbcolor 100 400 moveto 45 rotate (ERROR) show`"")
+                                    Start-Process -FilePath $ghostscript -ArgumentList $gsWmArgs -Wait -WindowStyle Hidden | Out-Null
+                                    
+                                    $stampArgs = @("`"$errorRawPdf`"", "multibackground", "`"$errorWmPdf`"", "output", "`"$outPdfBase.pdf`"")
+                                    Start-Process -FilePath $pdftk -ArgumentList $stampArgs -Wait -WindowStyle Hidden | Out-Null
+                                    
+                                    $txtPath = "$outPdfBase.txt"
+                                    $newContent = "--- PAGE $pageNum ---`r`n[OCR ERROR] Tesseract failed for this page. Original page retained.`r`n"
+                                    Set-Content -LiteralPath $txtPath -Value $newContent
+                                    
+                                    Remove-Item -LiteralPath $errorRawPdf, $errorWmPdf -Force -ErrorAction SilentlyContinue
+                                    
+                                    [PSCustomObject]@{ Success = $true; PartialError = $true; ErrorMsg = "Tesseract failed on $($img.Name). Inserted original page with Error watermark."; PdfPath = "`"$outPdfBase.pdf`""; TxtPath = $txtPath }
                                     continue
                                 }
                                 
@@ -492,9 +550,14 @@ PROCESS {
                         }
                         
                         $failed = $results | Where-Object { -not $_.Success }
+                        $partials = $results | Where-Object { $_.PartialError }
                         if ($failed.Count -gt 0) {
                             $hasError = $true
                             $errorMsg = $failed[0].ErrorMsg
+                        }
+                        elseif ($partials.Count -gt 0) {
+                            $hasPartialError = $true
+                            $errorMsg = ($partials | Select-Object -ExpandProperty ErrorMsg) -join "`r`n"
                         }
                         
                         if (-not $hasError) {
@@ -514,6 +577,7 @@ PROCESS {
                                 $allPdftkArgs += "`"$tempMergedPdf`""
                                 if ($PdftkArgs) { $allPdftkArgs += $PdftkArgs }
                                 
+                                $pdftkProcess = Write-Verbose "Executing $pdftk with arguments: $($allPdftkArgs -join ' ')"
                                 $pdftkProcess = Start-Process -FilePath $pdftk -ArgumentList $allPdftkArgs -Wait -WindowStyle Hidden -PassThru
                                 if ($pdftkProcess.ExitCode -ne 0) {
                                     $hasError = $true
@@ -528,6 +592,7 @@ PROCESS {
                                         "output",
                                         "`"$outPath`""
                                     )
+                                    Write-Verbose "`"$pdftk`" $($watermarkArgs -join ' ')"
                                     $wmProcess = Start-Process -FilePath $pdftk -ArgumentList $watermarkArgs -Wait -WindowStyle Hidden -PassThru
                                     if ($wmProcess.ExitCode -ne 0) {
                                         $hasError = $true
@@ -539,6 +604,7 @@ PROCESS {
                                 $allPdftkArgs += "`"$outPath`""
                                 if ($PdftkArgs) { $allPdftkArgs += $PdftkArgs }
                                 
+                                Write-Verbose "`"$pdftk`" $($allPdftkArgs -join ' ')"
                                 $pdftkProcess = Start-Process -FilePath $pdftk -ArgumentList $allPdftkArgs -Wait -WindowStyle Hidden -PassThru
                                 if ($pdftkProcess.ExitCode -ne 0) {
                                     $hasError = $true
@@ -556,6 +622,7 @@ PROCESS {
                                     "output",
                                     "`"$metaPdfPath`""
                                 )
+                                Write-Verbose "`"$pdftk`" $($metaArgs -join ' ')"
                                 $metaProc = Start-Process -FilePath $pdftk -ArgumentList $metaArgs -Wait -WindowStyle Hidden -PassThru
                                 if ($metaProc.ExitCode -eq 0 -and (Test-Path -LiteralPath $metaPdfPath)) {
                                     Move-Item -LiteralPath $metaPdfPath -Destination $outPath -Force
@@ -606,6 +673,7 @@ PROCESS {
                 )
                 if ($TesseractArgs) { $tessArgs += $TesseractArgs }
                 
+                Write-Verbose "`"$tesseract`" $($tessArgs -join ' ')"
                 $tessProcess = Start-Process -FilePath $tesseract -ArgumentList $tessArgs -Wait -WindowStyle Hidden -PassThru
                 if ($tessProcess.ExitCode -ne 0) {
                     $hasError = $true
@@ -624,6 +692,7 @@ PROCESS {
                             "output",
                             "`"$tempPdf`""
                         )
+                        Write-Verbose "`"$pdftk`" $($watermarkArgs -join ' ')"
                         $wmProcess = Start-Process -FilePath $pdftk -ArgumentList $watermarkArgs -Wait -WindowStyle Hidden -PassThru
                         if ($wmProcess.ExitCode -ne 0) {
                             $hasError = $true
@@ -669,8 +738,19 @@ PROCESS {
         else {
             $elapsed = (Get-Date) - $startTime
             $timeStr = [math]::Round($elapsed.TotalSeconds, 2)
-            Write-Info "Success: Created $($file.BaseName)_ocr.pdf in ${timeStr}s"
-            Write-SystemLog "Successfully processed $($file.FullName) in ${timeStr} seconds." "Information"
+            
+            if ($hasPartialError) {
+                Write-Warn "Partially processed $($file.FullName) with errors: $errorMsg"
+                Set-Content -LiteralPath $errPath -Value $errorMsg
+                Write-SystemLog "Partially processed $($file.FullName). Error: $errorMsg" "Warning"
+                $retCode = 2
+                $statusMsg = "Partial Success"
+            } else {
+                $retCode = 0
+                $statusMsg = "Success"
+                Write-Info "${statusMsg}: Created $($file.BaseName)_ocr.pdf in ${timeStr}s"
+                Write-SystemLog "Successfully processed $($file.FullName) in ${timeStr} seconds." "Information"
+            }
             
             # File Movement Variables
             $outTxtPath = Join-Path $file.DirectoryName ($file.BaseName + "_ocr.txt")
@@ -685,8 +765,8 @@ PROCESS {
 
             $reportData += [PSCustomObject]@{
                 FullName = $file.FullName
-                ReturnCode = 0
-                ErrorMessages = ""
+                ReturnCode = $retCode
+                ErrorMessages = if ($hasPartialError) { $errorMsg } else { "" }
                 Pages = $numPages
                 Characters = $numChars
                 Words = $numWords
@@ -782,6 +862,8 @@ PROCESS {
                 $reportData | Format-Table -AutoSize | Out-String | Write-Host
             }
         }
+        
+        $global:OcrLastReport = $reportData
     }
 }
 }

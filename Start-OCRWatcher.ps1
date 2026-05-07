@@ -53,6 +53,9 @@ param(
     [string]$WatchFolder = "C:\scans",
     [switch]$PassThru
 )
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
 
 $InvokeScript = Join-Path $PSScriptRoot "Invoke-OCR.ps1"
 

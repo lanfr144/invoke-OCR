@@ -3,6 +3,9 @@ $script:Silent = $false
 
 function Set-OcrLoggingState {
     param([switch]$Quiet, [switch]$Silent)
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
     $script:Quiet = $Quiet
     $script:Silent = $Silent
 }

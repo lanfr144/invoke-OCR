@@ -53,6 +53,9 @@ param(
     [switch]$Recurse,
     [switch]$PassThru
 )
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
 
 BEGIN {
     $moduleRoot = Join-Path $PSScriptRoot 'Modules'

@@ -38,6 +38,9 @@
 param(
     [string]$Name = "default"
 )
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
 
 $credPath = Join-Path $env:USERPROFILE ".ocrCredentials_$Name.xml"
 

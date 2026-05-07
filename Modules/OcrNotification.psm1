@@ -1,5 +1,8 @@
 function Show-ErrorPopup {
     param([string]$Title, [string]$Message)
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
     try {
         # Try BurntToast module first (best experience)
         if (Get-Module -ListAvailable -Name BurntToast -ErrorAction SilentlyContinue) {

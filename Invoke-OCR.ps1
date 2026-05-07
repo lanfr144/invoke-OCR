@@ -329,6 +329,9 @@ param(
 
     [switch]$PassThru
 )
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
 
 $moduleRoot = Join-Path $PSScriptRoot 'Modules'
 Import-Module (Join-Path $moduleRoot 'OcrLogging.psm1') -Force
@@ -337,16 +340,33 @@ Import-Module (Join-Path $moduleRoot 'OcrConfig.psm1') -Force
 Import-Module (Join-Path $moduleRoot 'OcrEmail.psm1') -Force
 Import-Module (Join-Path $moduleRoot 'InvokeOcr.psm1') -Force
 
-Set-OcrLoggingState -Quiet $Quiet -Silent $Silent
+Set-OcrLoggingState -Quiet:$Quiet -Silent:$Silent
 
 $exitCode = 0
 try {
+    Write-Verbose "Invoke-OCR.ps1 starting."
+    Write-Debug "Invoke-OCR.ps1 Path parameter: $($Path -join ', ')"
+    Write-Information "Invoke-OCR.ps1 Path parameter: $($Path -join ', ')" -InformationAction Continue
+
     $argsForTask = @{}
-    foreach ($k in $PSBoundParameters.Keys) { $argsForTask[$k] = $PSBoundParameters[$k] }
+    foreach ($k in $PSBoundParameters.Keys) { 
+        $argsForTask[$k] = $PSBoundParameters[$k] 
+        Write-Debug "Invoke-OCR.ps1 parameter: $k = $($PSBoundParameters[$k])"
+    }
     $argsForTask.Remove("PassThru") | Out-Null
 
+    Write-Verbose "Calling Invoke-OcrTask with splatted arguments"
+    Write-Debug "Invoke-OcrTask args: $($argsForTask | Out-String)"
     # Call the core function
     Invoke-OcrTask @argsForTask
+    Write-Verbose "Returned from Invoke-OcrTask"
+    
+    if ($global:OcrLastReport) {
+        $maxReturnCode = ($global:OcrLastReport | Measure-Object -Property ReturnCode -Maximum).Maximum
+        if ($maxReturnCode -ne $null -and $maxReturnCode -gt $exitCode) {
+            $exitCode = $maxReturnCode
+        }
+    }
 }
 catch {
     Write-Host "OCR Task Failed: $_" -ForegroundColor Red
@@ -356,7 +376,7 @@ catch {
 if ($PassThru) {
     [PSCustomObject]@{
         ExitCode = $exitCode
-        Message  = if ($exitCode -eq 0) { "Success" } else { "Failed" }
+        Message  = if ($exitCode -eq 0) { "Success" } elseif ($exitCode -eq 2) { "Partial Success" } else { "Failed" }
     }
 }
 

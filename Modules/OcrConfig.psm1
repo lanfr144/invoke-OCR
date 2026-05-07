@@ -18,6 +18,9 @@ function Get-ValidConfigKeys {
 
 function Import-OcrConfigFile {
     param([string]$FilePath)
+    Write-Verbose "Entering $($MyInvocation.MyCommand.Name)"
+    Write-Debug "Entering $($MyInvocation.MyCommand.Name) - Parameters: $($PSBoundParameters | Out-String)"
+    Write-Information "Entering $($MyInvocation.MyCommand.Name)" -InformationAction Continue
     $config = @{}
     if (-not (Test-Path -LiteralPath $FilePath)) { return $config }
 
